@@ -22,6 +22,7 @@ import traceback
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from .decoder import Bootstrap, Engine, State
 
@@ -92,6 +93,114 @@ def truncate_pcap_prefix(source: bytes) -> bytes:
     return source[:offset]
 
 
+#: CSV 导出列顺序
+CSV_FIELDS = [
+    "time", "flow", "objectId", "scene", "x", "y", "z", "yaw", "speed", "state", "merged",
+    "sampleId", "captureAt", "callbackAt", "processingStartedAt", "decodedAt",
+    "decodeMs", "queueMs", "captureToDecodedMs", "replayed", "gameServerTime",
+]
+
+
+class DashboardHandler(BaseHTTPRequestHandler):
+    """看板的 HTTP 端点。
+
+    做成模块级类而不是闭包，是为了能被测试真的请求一遍——SSE 分支曾经因为一个方法名
+    写错而在每次页面连接时抛异常，闭包写法下没法覆盖到。
+    依赖通过 :func:`make_handler` 注入。
+    """
+
+    state: State
+    run: Path
+    record: Any
+    stop: threading.Event
+    quiet: bool = True
+
+    def log_message(self, *args):
+        if not self.quiet:
+            super().log_message(*args)
+
+    def _send(self, data: bytes, kind: str = "application/json; charset=utf-8", code: int = 200) -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            self.wfile.write(data)
+
+    def _snapshot(self) -> dict:
+        snapshot = self.state.snapshot()
+        snapshot["runDirectory"] = str(self.run)
+        snapshot["serverSentAt"] = time.time()
+        return snapshot
+
+    def _positions_csv(self) -> bytes:
+        with self.state.lock:
+            self.record.flush()
+            data = (self.run / "positions.jsonl").read_text(encoding="utf-8")
+        out = io.StringIO()
+        writer = csv.DictWriter(out, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for line in data.splitlines():
+            if line.strip():
+                writer.writerow(json.loads(line))
+        # 带 BOM：Excel 打开中文列名不会乱码
+        return ("﻿" + out.getvalue()).encode()
+
+    def _event_stream(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        previous = None
+        sent = 0.0
+        try:
+            while not self.stop.is_set():
+                snapshot = self._snapshot()
+                fingerprint = (
+                    snapshot["leaderPositions"],
+                    snapshot["ws"]["samples"],
+                    snapshot["ws"]["status"],
+                    snapshot["frames"] // 20,
+                    snapshot["captureReady"],
+                    snapshot["captureError"],
+                )
+                # 有变化立刻推，没变化每秒保活一次
+                if fingerprint != previous or time.monotonic() - sent > 1:
+                    payload = "data: " + json.dumps(snapshot, ensure_ascii=False) + "\n\n"
+                    self.wfile.write(payload.encode())
+                    self.wfile.flush()
+                    previous = fingerprint
+                    sent = time.monotonic()
+                self.stop.wait(0.02)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+
+    def do_GET(self):
+        path = self.path.split("?")[0]
+        if path == "/":
+            self._send(DASHBOARD_HTML.read_bytes(), "text/html; charset=utf-8")
+        elif path == "/api/state":
+            self._send(json.dumps(self._snapshot(), ensure_ascii=False).encode())
+        elif path == "/api/positions.csv":
+            self._send(self._positions_csv(), "text/csv; charset=utf-8")
+        elif path == "/api/events":
+            self._event_stream()
+        else:
+            self._send(b'{"error":"not found"}', code=404)
+
+
+def make_handler(state: State, run: Path, record, stop: threading.Event):
+    """把运行期依赖绑到一个 handler 类上。"""
+
+    return type(
+        "BoundDashboardHandler",
+        (DashboardHandler,),
+        {"state": state, "run": run, "record": record, "stop": stop},
+    )
+
+
 def serve(args) -> int:
     from scapy.all import AsyncSniffer, PcapReader, PcapWriter
 
@@ -111,77 +220,7 @@ def serve(args) -> int:
     writer = PcapWriter(str(run / "capture.pcap"), sync=False)
     sniffer_holder: dict[str, object] = {}
 
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *a):
-            pass
-
-        def _send(self, data: bytes, kind: str = "application/json; charset=utf-8", code: int = 200):
-            self.send_response(code)
-            self.send_header("Content-Type", kind)
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.end_headers()
-            with contextlib.suppress(BrokenPipeError, ConnectionResetError):
-                self.wfile.write(data)
-
-        def do_GET(self):
-            path = self.path.split("?")[0]
-            if path == "/":
-                self._send(DASHBOARD_HTML.read_bytes(), "text/html; charset=utf-8")
-            elif path == "/api/state":
-                snapshot = state.snapshot()
-                snapshot["runDirectory"] = str(run)
-                snapshot["serverSentAt"] = time.time()
-                self._send(json.dumps(snapshot, ensure_ascii=False).encode())
-            elif path == "/api/positions.csv":
-                with state.lock:
-                    record.flush()
-                    data = (run / "positions.jsonl").read_text(encoding="utf-8")
-                out = io.StringIO()
-                names = [
-                    "time", "flow", "objectId", "scene", "x", "y", "z", "yaw", "speed", "state", "merged",
-                    "sampleId", "captureAt", "callbackAt", "processingStartedAt", "decodedAt",
-                    "decodeMs", "queueMs", "captureToDecodedMs", "replayed", "gameServerTime",
-                ]
-                w = csv.DictWriter(out, fieldnames=names, extrasaction="ignore")
-                w.writeheader()
-                for line in data.splitlines():
-                    if line.strip():
-                        w.writerow(json.loads(line))
-                self._send(("﻿" + out.getvalue()).encode(), "text/csv; charset=utf-8")
-            elif path == "/api/events":
-                self._send_response(200)
-                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                previous = None
-                sent = 0.0
-                try:
-                    while not stop.is_set():
-                        snapshot = state.snapshot()
-                        fingerprint = (
-                            snapshot["leaderPositions"],
-                            snapshot["ws"]["samples"],
-                            snapshot["ws"]["status"],
-                            snapshot["frames"] // 20,
-                            snapshot["captureReady"],
-                            snapshot["captureError"],
-                        )
-                        if fingerprint != previous or time.monotonic() - sent > 1:
-                            snapshot["runDirectory"] = str(run)
-                            snapshot["serverSentAt"] = time.time()
-                            self.wfile.write(("data: " + json.dumps(snapshot, ensure_ascii=False) + "\n\n").encode())
-                            self.wfile.flush()
-                            previous = fingerprint
-                            sent = time.monotonic()
-                        stop.wait(0.02)
-                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-                    pass
-            else:
-                self._send(b'{"error":"not found"}', code=404)
-
-    http = ThreadingHTTPServer((args.host, args.port), Handler)
+    http = ThreadingHTTPServer((args.host, args.port), make_handler(state, run, record, stop))
     iface = pick_interface(args.interface)
 
     def callback(packet):
