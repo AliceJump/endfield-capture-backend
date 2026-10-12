@@ -64,7 +64,9 @@ TCP 重组（含乱序 / 重传 / 重叠）
 - **Python 3.12**
 - **Npcap**（Windows 抓包驱动，需勾选 "WinPcap API-compatible Mode"）— [下载](https://npcap.com/)
 - 本机安装的《终末地》客户端（用于读取 `GameAssembly.dll` 与 `global-metadata.dat`）
-- 可选：官方地图 WS 对照需要一份 ok-end-field 仓库与其中的账号配置
+- 可选：官方地图 WS 对照需要一份 [ok-end-field](https://github.com/AliceJump/ok-end-field) 仓库
+  与其中的账号配置。用 `uv sync --extra ws-compare` 安装额外依赖（含 ok-script）。
+  不装也能正常用，只是没有对照。
 
 客户端文件**不随本项目分发**，必须是你自己机器上已安装的那份。
 
@@ -97,7 +99,10 @@ uv run endfield-capture-backend serve --port 8765
 | `--seed-pcap` | 先开新抓包，再重放一份旧捕获，用来**接管一个已经在跑的游戏会话** |
 | `--runs-dir` | 运行产物目录，默认 `./runs` |
 | `--no-map-ws` | 不启用官方地图 WS 对照 |
-| `--ok-end-field` | ok-end-field 仓库路径（仅为启用 WS 对照） |
+| `--ok-end-field` | ok-end-field 仓库路径（仅为启用 WS 对照，默认自动探测同级目录） |
+| `--account` / `--content` | 地图 WS 用哪个账号的 content；配置里有多份时必须指定 |
+
+> 启用 WS 对照会让本项目与 AGPL-3.0 的 ok-end-field 链接在一起；不启用则完全不依赖它。
 
 ### 游戏已经在跑怎么办
 
