@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import gc
 import hashlib
+import json
 import struct
 import threading
 import time
@@ -407,6 +408,8 @@ class State:
         self.bootstrap_seconds: float | None = None
         self.modulus_seconds: float | None = None
         self.capture_error: str | None = None
+        #: 位置写盘失败的原因；非空表示已停止写盘但解码仍在继续
+        self.record_error: str | None = None
         #: 逐场景观察到的地图名，用来人工核对 scene → 网格 的对应关系
         self.scene_maps: dict[str, Counter] = defaultdict(Counter)
         self.ws = {"status": "未启用", "samples": 0, "lastPosition": None, "error": None}
@@ -453,6 +456,7 @@ class State:
                 "bootstrapSeconds": self.bootstrap_seconds,
                 "modulusSeconds": self.modulus_seconds,
                 "captureError": self.capture_error,
+                "recordError": self.record_error,
                 "sceneMaps": self.scene_maps_summary(),
                 "ws": {**self.ws, "trajectory": list(self.ws_points)},
                 "now": time.time(),
@@ -573,6 +577,8 @@ class Flow:
         del buffer[:size]
         self.status = "正在解码"
         self.note(1, "in", body_length, False)
+        # 公钥模数是懒恢复的（用这条登录响应当样本），所以它的耗时要到这时才知道
+        self.state.modulus_seconds = self.bootstrap.modulus_seconds
         self.state.event(f"连接 {self.id} 登录初始化成功，开始持续解码")
 
     def _consume_crypted(self, direction: str, buffer: bytearray, head_length: int, size: int) -> None:
@@ -699,9 +705,15 @@ class Flow:
                 self.state.last = payload
                 self.state.points.append(payload)
                 self.state.scene_maps[str(record.scene)][self._observed_map_id()] += 1
-                if self.state.record_writer:
-                    self.state.record_writer.write(payload)
-                    self.state.record_writer.flush()
+                if self.state.record_writer and not self.state.record_error:
+                    try:
+                        self.state.record_writer.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                        self.state.record_writer.flush()
+                    except (OSError, TypeError, ValueError) as exc:
+                        # 写盘失败（磁盘满、权限、编码）不该把整条解码链拖垮，但也**不能**
+                        # 静默：记一次并停写，让看板上看得见。
+                        self.state.record_error = str(exc)[:200]
+                        self.state.event(f"位置写盘失败，已停止写入（解码继续）：{exc}")
 
     def _observed_map_id(self) -> str:
         """后端若同时跑着官方地图 WS，用它的 mapId 作为场景的对照真值。"""
