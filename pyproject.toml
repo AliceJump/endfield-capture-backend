@@ -1,0 +1,56 @@
+[project]
+name = "endfield-capture-backend"
+version = "0.1.0"
+description = "Passive packet-capture coordinate backend for Endfield (offline protocol decoding + local dashboard)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "AGPL-3.0-or-later" }
+dependencies = [
+    "scapy>=2.6",
+    "unicorn>=2.1",
+    "capstone>=5.0",
+    "pycryptodome>=3.20",
+    "lz4>=4.3",
+    "protobuf>=5.0",
+    "cryptography>=44.0",
+]
+
+[project.optional-dependencies]
+#: 官方地图 WS 对照：需要 ok-end-field 仓库 + 它的依赖 ok-script，见 README
+ws-compare = ["websockets>=15.0", "ok-script==2.0.7b1"]
+
+[project.scripts]
+endfield-capture-backend = "endfield_capture.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/endfield_capture"]
+
+[tool.uv]
+package = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+allowed-confusables = ["，", "。", "；", "：", "（", "）", "、"]
+select = ["E", "W", "F", "I", "C4", "B", "UP", "SIM", "RUF"]
+ignore = [
+    "E501",
+    "D",
+    "S101",
+    "BLE001",
+    "N",
+    "C901",
+    "RUF001",
+    "RUF002",
+    "PT",
+    "PLR2004",
+]
+
+[tool.ruff.format]
+quote-style = "double"
