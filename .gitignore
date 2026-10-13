@@ -2,6 +2,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+# IDE 配置带本机专属路径（.iml / misc.xml），不进版本库
+.idea/
 runs/
 *.egg-info/
 dist/

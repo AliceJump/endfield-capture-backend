@@ -1,7 +1,0 @@
-scapy>=2.6
-unicorn>=2.1
-capstone>=5.0
-pycryptodome>=3.20
-lz4>=4.3
-protobuf>=5.0
-cryptography>=44.0
