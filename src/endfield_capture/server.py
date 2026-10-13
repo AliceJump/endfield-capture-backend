@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from .decoder import Bootstrap, Engine, State
+from .scene_index import scene_index_payload
 
 #: 反压队列：满了计入丢包，不阻塞抓包回调
 QUEUE_LIMIT = 20000
@@ -95,8 +96,9 @@ def truncate_pcap_prefix(source: bytes) -> bytes:
 
 #: CSV 导出列顺序
 CSV_FIELDS = [
-    "time", "flow", "objectId", "scene", "x", "y", "z", "yaw", "speed", "state", "merged",
-    "sampleId", "captureAt", "callbackAt", "processingStartedAt", "decodedAt",
+    "time", "flow", "objectId", "scene", "levelId", "levelName", "dungeonName", "mapId", "mapName",
+    "x", "y", "z", "yaw", "speed", "state",
+    "merged", "sampleId", "captureAt", "callbackAt", "processingStartedAt", "decodedAt",
     "decodeMs", "queueMs", "captureToDecodedMs", "replayed", "gameServerTime",
 ]
 
@@ -114,6 +116,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
     record: Any
     stop: threading.Event
     quiet: bool = True
+    #: ``True`` 时只提供 ``/api/*``：不读也不提供 ``dashboard.html``
+    headless: bool = False
+    #: 命名管道发布器（``--pipe`` 时才有）；只用来在 ``/api/state`` 里报个状态
+    pipe: Any = None
 
     def log_message(self, *args):
         if not self.quiet:
@@ -132,6 +138,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _snapshot(self) -> dict:
         snapshot = self.state.snapshot()
         snapshot["runDirectory"] = str(self.run)
+        snapshot["pipe"] = self.pipe.stats() if self.pipe is not None else None
         snapshot["serverSentAt"] = time.time()
         return snapshot
 
@@ -180,24 +187,53 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         if path == "/":
+            if self.headless:
+                self._send(
+                    json.dumps(
+                        {
+                            "service": "endfield-capture-backend",
+                            "dashboard": "disabled",
+                            "api": ["/api/state", "/api/scene-index", "/api/positions.csv", "/api/events"],
+                        },
+                        ensure_ascii=False,
+                    ).encode()
+                )
+                return
             self._send(DASHBOARD_HTML.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api/state":
             self._send(json.dumps(self._snapshot(), ensure_ascii=False).encode())
         elif path == "/api/positions.csv":
             self._send(self._positions_csv(), "text/csv; charset=utf-8")
+        elif path == "/api/scene-index":
+            self._send(json.dumps(scene_index_payload(), ensure_ascii=False).encode())
         elif path == "/api/events":
             self._event_stream()
         else:
             self._send(b'{"error":"not found"}', code=404)
 
 
-def make_handler(state: State, run: Path, record, stop: threading.Event):
+def make_handler(
+    state: State,
+    run: Path,
+    record,
+    stop: threading.Event,
+    *,
+    headless: bool = False,
+    pipe=None,
+):
     """把运行期依赖绑到一个 handler 类上。"""
 
     return type(
         "BoundDashboardHandler",
         (DashboardHandler,),
-        {"state": state, "run": run, "record": record, "stop": stop},
+        {
+            "state": state,
+            "run": run,
+            "record": record,
+            "stop": stop,
+            "headless": bool(headless),
+            "pipe": pipe,
+        },
     )
 
 
@@ -205,6 +241,10 @@ def serve(args) -> int:
     from scapy.all import AsyncSniffer, PcapReader, PcapWriter
 
     from .cli import _default_game_directory
+
+    # 参数自相矛盾就别白建一堆运行产物
+    if bool(getattr(args, "no_http", False)) and not getattr(args, "pipe", None):
+        raise SystemExit("--no-http 需要配合 --pipe：否则没有任何读取坐标的途径")
 
     game_directory = Path(args.game_dir) if args.game_dir else _default_game_directory()
     if game_directory is None:
@@ -220,7 +260,25 @@ def serve(args) -> int:
     writer = PcapWriter(str(run / "capture.pcap"), sync=False)
     sniffer_holder: dict[str, object] = {}
 
-    http = ThreadingHTTPServer((args.host, args.port), make_handler(state, run, record, stop))
+    headless = bool(getattr(args, "no_dashboard", False))
+    no_http = bool(getattr(args, "no_http", False))
+    pipe = None
+    if getattr(args, "pipe", None):
+        from .pipe_server import PositionPipe
+
+        pipe = PositionPipe(args.pipe, run_directory=str(run))
+        state.subscribe(pipe.publish)
+        pipe.start()
+    if no_http and pipe is None:
+        raise SystemExit("--no-http 需要配合 --pipe：否则没有任何读取坐标的途径")  # 兜底
+    http = (
+        None
+        if no_http
+        else ThreadingHTTPServer(
+            (args.host, args.port),
+            make_handler(state, run, record, stop, headless=headless, pipe=pipe),
+        )
+    )
     iface = pick_interface(args.interface)
 
     def callback(packet):
@@ -245,7 +303,11 @@ def serve(args) -> int:
                 state.bootstrap_seconds = bootstrap.key_seconds
             state.event(
                 f"客户端材料就绪（{bootstrap.key_seconds:.2f} s）；"
-                "公钥模数会在收到登录响应时恢复"
+                + (
+                    "公钥模数用预存数据（不需要模拟器）"
+                    if bootstrap.modulus_source == "data"
+                    else "公钥模数会在收到登录响应时现场恢复"
+                )
             )
             if not args.no_map_ws:
                 _start_map_ws(state, stop, run / "ws-positions.jsonl", args)
@@ -297,7 +359,13 @@ def serve(args) -> int:
     thread.start()
     (run / "service.json").write_text(
         json.dumps(
-            {"pid": os.getpid(), "url": f"http://{args.host}:{args.port}", "runDirectory": str(run)},
+            {
+                "pid": os.getpid(),
+                "url": f"http://{args.host}:{args.port}",
+                "dashboard": not headless,
+                "pipe": pipe.name if pipe is not None else None,
+                "runDirectory": str(run),
+            },
             ensure_ascii=False,
             indent=2,
         ),
@@ -306,18 +374,34 @@ def serve(args) -> int:
 
     def terminate(signum, frame):
         stop.set()
-        threading.Thread(target=http.shutdown, daemon=True).start()
+        if http is not None:
+            threading.Thread(target=http.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, terminate)
     signal.signal(signal.SIGTERM, terminate)
-    print(f"DASHBOARD_URL http://{args.host}:{args.port}", flush=True)
+    if no_http:
+        # --no-http 时根本没起 HTTP 服务，再打印 URL 会让人以为端点在那儿
+        print("HTTP 已关闭（--no-http）：只推送命名管道", flush=True)
+    elif headless:
+        print(f"API_URL http://{args.host}:{args.port}/api/state", flush=True)
+    else:
+        print(f"DASHBOARD_URL http://{args.host}:{args.port}", flush=True)
+    if pipe is not None:
+        print(f"PIPE_NAME {pipe.name}", flush=True)
     print(f"运行产物目录 {run}", flush=True)
     try:
-        http.serve_forever(poll_interval=0.25)
+        if http is not None:
+            http.serve_forever(poll_interval=0.25)
+        else:
+            while not stop.is_set():
+                time.sleep(0.25)
     finally:
         stop.set()
         thread.join(timeout=5)
-        http.server_close()
+        if pipe is not None:
+            pipe.stop()
+        if http is not None:
+            http.server_close()
         record.close()
     return 0
 

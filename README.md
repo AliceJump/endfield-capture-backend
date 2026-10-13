@@ -78,6 +78,17 @@ uv sync
 pip install -e .
 ```
 
+### 不装 Python 的机器：打成单个 exe
+
+```bash
+uv run --with pyinstaller pyinstaller packaging/endfield-capture-backend.spec --noconfirm
+```
+
+产物 `dist/endfield-capture-backend.exe`（onefile，19.2 MB），用法与命令行版一致。
+场景表与公钥模数两份数据已经打进包里，目标机器上不需要 Python，也不需要额外的数据文件
+（但**仍然需要 Npcap 驱动与本机客户端**）。细节、体积构成与「为什么冻结版不带 unicorn」
+见 [packaging/README.md](packaging/README.md)。
+
 ## 用法
 
 ### 启动看板
@@ -99,6 +110,9 @@ uv run endfield-capture-backend serve --port 8765
 | `--seed-pcap` | 先开新抓包，再重放一份旧捕获，用来**接管一个已经在跑的游戏会话** |
 | `--runs-dir` | 运行产物目录，默认 `./runs` |
 | `--no-map-ws` | 不启用官方地图 WS 对照 |
+| `--no-dashboard` | 不提供网页看板，只留 `/api/*`（给 ok-end-field 或后台运行时选这个） |
+| `--pipe [名字]` | 额外把坐标推到 Windows 命名管道（不带名字时用 `\\.\pipe\endfield-capture-positions`） |
+| `--no-http` | 连 HTTP 也不起，只用命名管道（需配合 `--pipe`；这样**不占任何端口**） |
 | `--ok-end-field` | ok-end-field 仓库路径（仅为启用 WS 对照，默认自动探测同级目录） |
 | `--account` / `--content` | 地图 WS 用哪个账号的 content；配置里有多份时必须指定 |
 
@@ -133,13 +147,150 @@ uv run endfield-capture-backend selftest path/to/full-session.pcap
 程序化读取用 `GET /api/state`，其中：
 
 - `lastPosition` — 最新一条坐标：`x` / `y` / `z` / `yaw`（度，正北 0、顺时针）/ `speed`
-  （世界单位/秒）/ `scene`（`sceneNumId`）/ `time`（抓包时间戳）
-- `sceneMaps` — **`sceneNumId` 与地图名的共现统计**，用来人工核对场景与导航网格的对应关系
+  （世界单位/秒）/ `scene`（`sceneNumId`）/ `levelId` / `levelName` / `dungeonName` /
+  `mapId` / `mapName` / `time`（抓包时间戳）
+- `sceneMaps` — **`sceneNumId` 与本会话观测到的地图名的共现统计**，外加本地场景表查出来的
+  `declared`（`levelId` / `levelName` / `source` / `dungeonId` / `dungeonName` / `seriesName` /
+  `category` / `dungeonCount` / `mapId` / `mapName` / `domain`），用来人工核对场景与导航网格的对应关系
 - `flows` — 每条连接的解码状态；出现「缺少连接起点」说明抓包启动太晚
 
 > **关于地图名**：`sceneNumId` **不是**地图的一一对应键——实测同一个地图可以有多个场景号。
 > 权威来源是游戏地图服务自己下发的 `mapId`（看板通过官方 WS 对照取得）。`sceneMaps`
 > 就是给你核对这两者关系用的。
+
+坐标写盘（`positions.jsonl`）、CSV 导出与 SSE 里都会带上 `levelId` / `levelName` /
+`dungeonName` / `mapId` / `mapName`，直接由场景号查出来，不需要 WS 对照。整张表用
+`GET /api/scene-index` 取：
+
+```json
+{
+  "count": 216,
+  "maps": {"base01": "帝江号", "map01": "四号谷地", "map02": "武陵"},
+  "scenes": [
+    {"scene": 232, "levelId": "map02_lv005", "levelName": "试验园区", "dungeonId": "",
+     "dungeonName": "", "seriesName": "", "category": "", "dungeonCount": 0,
+     "mapId": "map02", "mapName": "武陵", "domain": "domain_2"},
+    {"scene": 310, "levelId": "dung01_cdg011", "levelName": "物以类聚",
+     "dungeonId": "dung01_actmonster01", "dungeonName": "物以类聚", "seriesName": "生存特训",
+     "category": "dungeon_actmonster", "dungeonCount": 1,
+     "mapId": "map01", "mapName": "四号谷地", "domain": "domain_1"}
+  ]
+}
+```
+
+### 命名管道（可选传输）
+
+不想让消费方轮询 HTTP，就让它读 Windows 命名管道 —— Qt 的 `QLocalSocket` 直接读，不占端口：
+
+```powershell
+endfield-capture-backend serve --pipe --no-http        # 只推管道，不开任何端口
+endfield-capture-backend serve --pipe \\.\pipe\my-ef   # 换名字
+```
+
+协议极简：**换行分隔的 UTF-8 JSON，每行一个对象，带 `type` 字段**。
+
+```
+{"type": "hello", "protocol": 1, "pid": 1234, "pipe": "\\\\.\\pipe\\endfield-capture-positions", "runDirectory": "runs/..."}
+{"type": "position", "time": 1791870088.9, "scene": 361, "levelId": "map02_lv009", "levelName": "雪松林",
+ "dungeonName": "", "mapId": "map02", "mapName": "武陵", "x": 172.04, "y": 105.25, "z": 47.89,
+ "yaw": 308.8, "speed": 5.75, "state": 3, "merged": false}
+```
+
+`position` 行的字段与 `GET /api/state` 的 `lastPosition` 完全一致，消费方换传输不用改解析。
+
+- 连上先给 `hello`，紧接着补一条**当前最新坐标**（有的话），然后才是实时流；
+- **没有客户端时不排队**：只留最新一条，重连不会收到一堆积压的旧位置；
+- 写不过来时丢新样本（`/api/state` 的 `pipe.dropped` 能看到），**不阻塞解码**；
+- 不碰端口、不弹防火墙；管道是文件对象，跟读内存无关（有守卫测试钉着这条底线）。
+
+Python 侧调试一行就够（管道就是文件）：
+
+```powershell
+python -c "import json;[print(json.loads(l)['type'], json.loads(l).get('scene')) for l in open(r'\\.\pipe\endfield-capture-positions', encoding='utf-8')]"
+```
+
+### 场景表
+
+`src/endfield_capture/scene_index.py` 里的 `SCENE_INDEX` 是
+`sceneNumId` → 关卡 → 中文名 → 副本/系列 → 大地图 的查表。四层逐层都可能有缺，缺就留空，不猜。
+`sceneNumId` 就是客户端 `LevelBasicInfoTable` 的 `idNum`（用抓包核对过：102 / 228 / 232
+分别落在 `map02_lv007` / `map02_lv002` / `map02_lv005`，坐标也都落在 map02 主网格范围内）。
+关卡名来自 `LevelDescTable` 经客户端文本表解出（没有就退回副本名）；副本来自
+`DungeonTable` 里 `sceneId` 指向该关卡的条目——注意不是 `levelId`，那是副本加载用的底图
+（靶场那批全都写着 `map02_lv009`）。一个场景被多个副本共用时取 `dungeonId` 排序最前的那个，
+共用数量记在 `dungeonCount`（例如 `dung01_ttdg001` 是 16）。
+地图归属按这个优先级判：`SpecialLevelToMapTable` 的显式声明 → 关卡 id 前缀
+（`map01` / `map02` / `base01`）→ 地下城前缀（`dung01` → map01、`dung02` → map02）→
+没有所属大地图（`blackbox_*`、多数 `indie_*`）。`domainName` 只作参考字段带出，**不参与判定**：
+实测同一个前缀会横跨 `domain_1` / `domain_2`。
+
+**运行时只读这张表**：`scene_index.py` 打开包内的 `data/scene_index.json` 建查表，自己不解包、
+不推导、不生成任何东西；**读不到表就拒绝启动**（那和「这个号查不到」是两回事）。想用别的
+快照，把它指到另一份 JSON 即可：
+
+```powershell
+$env:EF_SCENE_INDEX = "D:\somewhere\scene_index.json"
+```
+
+表本身是客户端版本的快照，由离线工具生成一次（需要解包产物，默认路径是本机那份）：
+
+```bash
+python tools/generate_scene_index.py              # 写 src/endfield_capture/data/scene_index.json
+python tools/generate_scene_index.py --dry-run    # 只看统计
+python tools/generate_scene_index.py --out <路径>  # 打到别处（配合 EF_SCENE_INDEX）
+# 换机器时逐个覆盖：--levels / --special / --desc / --i18n / --text / --dungeons / --series
+```
+
+另有一份同类预存数据 `data/rsa_modulus.json`：恢复登录响应要用的 2048 位公钥模数。它同样
+由离线工具生成一次，运行时**优先读它**、读不到才回退到 x86 模拟器——
+打包出来的 exe 走的正是前者（冻结进程里 unicorn 的 JIT 会崩）。客户端更新后要重跑：
+
+```bash
+python tools/generate_rsa_modulus.py             # 自动取 runs/ 里最新的一份抓包
+python tools/generate_rsa_modulus.py --pcap <路径>
+```
+
+细节见 [packaging/README.md](packaging/README.md)。
+
+#### 查不到的场景号：别把它们当成场景号
+
+这张表只有 `LevelBasicInfoTable.idNum` **一个编号空间**，查不到就返回 `null`，不做推测。
+客户端里同时存在好几套编号，**数字会撞车**，所以查不到时先分清是哪种：
+
+- **独立地图没有 idNum**：把客户端所有表并起来看，`LevelBasicInfoTable` 的 216 个关卡之外
+  还有 22 个关卡 id，其中带名字的是：`indie_dg016` 遂明、`indie_hdg026` 兽影生杀、
+  `indie_hdg027` 暗曜白霆、`indie_hdg028` 沛然轰鸣、`indie_hdg029` 三角定位、
+  `blackbox_filling_5` 武陵综合应用、`blackbox_power_1` 电力供给；其余是 `test_*` /
+  `factory_*` / `ld_*` 之类的测试关卡。它们**没有场景号**，报文里不会以场景号的身份出现。
+- **`MapConfig.mapId` 是另一个空间**：解包产物 `Data/Json/MapConfig/*.json` 里每条地图配置都带
+  一个 `mapId`（例如 `dung02_gdg013` 的 `mapId` 就是 **463**，它的 `levelIds` 全是 468）。
+  这套号跟本表的场景号**会撞车**——最典型的是 `2`：既是 `map01` 的地图号，又是
+  `map01_lv002` 的场景号。所以**不能**拿 `mapId` 当场景号查，反之亦然。
+- `LevelShortIdTable` 里的短 id（如 `463` → 长 id `23100031243`，属于 `map02_lv008`）又是
+  第三套，同样不能混用。
+
+## 与 ok-end-field 协作
+
+[ok-end-field](https://github.com/AliceJump/ok-end-field) 侧的接入已经就位，不需要任何抓包
+依赖：它只读 `GET /api/state`，并且会在后端没在跑时**自动把 exe 拉起来**。
+
+一句话说清调用关系：
+
+```
+ok-end-field 定位任务 ──拉起(可选)──> endfield-capture-backend.exe serve --no-dashboard --no-map-ws
+        ▲                                              │
+        └────────── 轮询 GET /api/state ───────────────┘
+```
+
+**顺序是成败关键**：后端必须早于游戏的主连接就绪，否则拿不到登录握手。让应用拉起后端就能
+保证这个顺序（先在 ok-end-field 里勾上「使用实验技术」，再启动游戏）。
+
+应用侧相关配置：端口（默认 8765）、后端程序路径（留空自动探测）、是否自动启动、
+是否在停止定位时关闭后端（**默认不停**——后端状态绑在当前这一局连接上，关掉再拉起就等于
+丢了登录握手）。
+
+完整契约、字段表、坐标陈旧度语义、地图名判定顺序与故障排查表见
+[docs/ok-end-field-integration.md](docs/ok-end-field-integration.md)。
 
 ## 项目边界与已知限制
 
@@ -168,6 +319,7 @@ uv run endfield-capture-backend selftest <pcap>
 | `pe_image.py` | 最小 PE 解析（节表、VA↔文件偏移），只读本地文件 |
 | `srsa.py` | 离线模拟原生接收入口，恢复公钥模数 |
 | `decoder.py` | TCP 重组、分层解密、消息与坐标解析 |
+| `scene_index.py` | 只读查表：场景号（`idNum`）→ 关卡 → 中文名 → 副本/系列 → 大地图（读 `data/scene_index.json`） |
 | `server.py` | 抓包 + 本地 HTTP 看板 |
 | `schema.py` | 用独立 protobuf 描述复核解出的坐标 |
 | `selftest.py` | 回放核对 |

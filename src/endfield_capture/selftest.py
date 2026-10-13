@@ -85,7 +85,8 @@ def run_selftest(args) -> int:
     game_directory = _require_game_directory(args.game_dir)
     print(f"客户端目录 {game_directory}")
     bootstrap = Bootstrap(game_directory)
-    print(f"读取客户端材料用时 {bootstrap.key_seconds:.2f} s（公钥模数在首次解开登录响应时恢复）")
+    how = "预存数据" if bootstrap.modulus_source == "data" else "现场模拟恢复"
+    print(f"读取客户端材料用时 {bootstrap.key_seconds:.2f} s（公钥模数：{how}）")
 
     packets = _read_packets(pcap)
     print(f"读入 {len(packets)} 个 TCP 包")

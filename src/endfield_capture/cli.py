@@ -16,6 +16,8 @@ import os
 import sys
 from pathlib import Path
 
+from .pipe_server import DEFAULT_PIPE_NAME
+
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 
@@ -69,6 +71,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-map-ws",
         action="store_true",
         help="不启用官方地图 WS 对照（默认启用；启用需要在 ok-end-field 里配置账号 content）",
+    )
+    serve.add_argument(
+        "--no-dashboard",
+        action="store_true",
+        help="不提供网页看板，只留 /api/*（给 ok-end-field 或后台运行时选这个；可以不打 dashboard.html）",
+    )
+    serve.add_argument(
+        "--pipe",
+        nargs="?",
+        const=DEFAULT_PIPE_NAME,
+        default=None,
+        help=f"额外把坐标推到 Windows 命名管道（不带值时用 {DEFAULT_PIPE_NAME}）",
+    )
+    serve.add_argument(
+        "--no-http",
+        action="store_true",
+        help="连 HTTP 服务也不起，只用命名管道（需要 --pipe；这样不占任何端口）",
     )
     serve.add_argument(
         "--ok-end-field",

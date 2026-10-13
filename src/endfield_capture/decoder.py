@@ -48,8 +48,8 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from lz4.block import decompress as lz4_decompress
 
 from .pe_image import PeImage
+from .scene_index import resolve_scene
 from .schema import PositionMessage
-from .srsa import emulate_receive_entry
 
 __all__ = [
     "CLIENT_DLL_SHA256",
@@ -70,6 +70,9 @@ CLIENT_DLL_SHA256 = "c24495e51b406f03b03890c4788ee618ae022c991405be5d5b8b787cb77
 CLIENT_METADATA_SHA256 = "0076743397acadf03d3b0064343a963c7c88863b8160526d397e4b3efb96f02e"
 
 METADATA_RELATIVE_PATH = "Endfield_Data/il2cpp_data/Metadata/global-metadata.dat"
+
+#: 预存的公钥模数（由 ``tools/generate_rsa_modulus.py`` 离线生成）；不在就打不动模拟器
+MODULUS_DATA_PATH = Path(__file__).with_name("data") / "rsa_modulus.json"
 
 #: RSA 私钥在 metadata 字符串字面量表里的位置（本机已核对版本）
 _KEY_LITERAL_RVA = 0x47B8FB7
@@ -173,6 +176,12 @@ class PositionRecord:
     speed: float | None
     state: int
     merged: bool
+    #: 场景号经 :mod:`endfield_capture.scene_index` 查出来的关卡、副本与地图；表里没有时为空
+    level_id: str = ""
+    level_name: str = ""
+    dungeon_name: str = ""
+    map_id: str = ""
+    map_name: str = ""
     sample_id: int = 0
     capture_at: float | None = None
     callback_at: float | None = None
@@ -190,6 +199,11 @@ class PositionRecord:
             "flow": self.flow,
             "objectId": self.object_id,
             "scene": self.scene,
+            "levelId": self.level_id,
+            "levelName": self.level_name,
+            "dungeonName": self.dungeon_name,
+            "mapId": self.map_id,
+            "mapName": self.map_name,
             "x": self.x,
             "y": self.y,
             "z": self.z,
@@ -213,8 +227,14 @@ class PositionRecord:
 class Bootstrap:
     """每局连接初始化一次的材料：公钥模数 + 客户端内嵌 RSA 私钥。
 
-    公钥模数**惰性恢复**：第一条登录响应就是恢复它所需的样本，不需要事先准备抓包。
-    恢复完成后立刻丢掉整份 DLL 镜像——之后全是纯 Python 运算。
+    公钥模数按两条路拿：
+
+    1. **预存的数据**（``data/rsa_modulus.json``，由 ``tools/generate_rsa_modulus.py`` 离线
+       生成一次）——客户端哈希对得上就直接用，**完全不碰模拟器**。打包出来的二进制走这条。
+    2. 数据缺失或与客户端对不上时，回退到**离线模拟器**：拿第一条登录响应当样本，把客户端
+       DLL 的机器码在 unicorn 里跑一遍恢复模数。这条路只在装了 unicorn 的源码环境里可用。
+
+    两条路都要先核对客户端哈希；完成后立刻丢掉整份 DLL 镜像——之后全是纯 Python 运算。
     """
 
     def __init__(self, game_directory: Path):
@@ -223,9 +243,19 @@ class Bootstrap:
         image = self._load_verified_image()
         self._private = self._load_client_private_key(image)
         self._image: PeImage | None = image
-        self._modulus: int | None = None
+        #: ``"data"`` = 用的是预存模数；``"emulated"`` = 现场模拟恢复的；``None`` = 还没有
+        self.modulus_source: str | None = None
+        self._modulus: int | None = self._load_stored_modulus()
+        if self._modulus is not None:
+            self.modulus_source = "data"
         self.modulus_seconds: float | None = None
         self.key_seconds = time.perf_counter() - started
+
+    @property
+    def modulus(self) -> int | None:
+        """当前用的公钥模数；``None`` 表示还没恢复。"""
+
+        return self._modulus
 
     # ------------------------------------------------------------------ #
     # 客户端材料
@@ -270,6 +300,28 @@ class Bootstrap:
     # ------------------------------------------------------------------ #
     # 公钥模数
     # ------------------------------------------------------------------ #
+    def _load_stored_modulus(self) -> int | None:
+        """读预存的模数；哈希对不上就当没有（不报错，回退模拟器）。"""
+
+        if not MODULUS_DATA_PATH.is_file():
+            return None
+        try:
+            payload = json.loads(MODULUS_DATA_PATH.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        same_client = (
+            payload.get("client_dll_sha256") == CLIENT_DLL_SHA256
+            and payload.get("client_metadata_sha256") == CLIENT_METADATA_SHA256
+        )
+        modulus = payload.get("modulus_hex") or ""
+        if not same_client or not modulus:
+            return None
+        try:
+            value = int(modulus, 16)
+        except ValueError:
+            return None
+        return value if value.bit_length() >= 1024 else None
+
     def _recover_modulus(self, envelope: bytes) -> int:
         """用一条真实的登录响应跑一遍原生模拟，恢复公钥模数。"""
 
@@ -277,12 +329,21 @@ class Bootstrap:
         if image is None:
             # 已经释放过镜像说明模数早就恢复了，不该走到这里
             raise RuntimeError("公钥模数恢复失败：客户端镜像已释放")
+        try:
+            from .srsa import emulate_receive_entry
+        except ImportError as exc:  # 打包版故意不带 unicorn / capstone
+            raise RuntimeError(
+                f"这条客户端没有可用的预存模数，而本程序不含模拟器（{exc}）。"
+                f"请用 tools/generate_rsa_modulus.py 生成 {MODULUS_DATA_PATH}，"
+                "或用装了依赖的源码环境运行。"
+            ) from exc
         started = time.perf_counter()
         result = emulate_receive_entry(image, envelope)
         if not result.ok or result.modulus is None:
             reason = (result.state or {}).get("stop") or (result.state or {}).get("error")
             raise ValueError(f"原生接收路径模拟未跑通：{reason}")
         self._modulus = result.modulus
+        self.modulus_source = "emulated"
         self.modulus_seconds = time.perf_counter() - started
 
         # 自证：纯 Python 的 pow 结果必须与模拟输出逐字节相同，否则不采用这个模数。
@@ -410,6 +471,8 @@ class State:
         self.capture_error: str | None = None
         #: 位置写盘失败的原因；非空表示已停止写盘但解码仍在继续
         self.record_error: str | None = None
+        #: 位置回调（命名管道等）。**必须不阻塞**——它们在持锁状态下被调用
+        self.sinks: list = []
         #: 逐场景观察到的地图名，用来人工核对 scene → 网格 的对应关系
         self.scene_maps: dict[str, Counter] = defaultdict(Counter)
         self.ws = {"status": "未启用", "samples": 0, "lastPosition": None, "error": None}
@@ -418,6 +481,15 @@ class State:
     def event(self, message: str) -> None:
         with self.lock:
             self.events.appendleft({"time": time.time(), "message": message})
+
+    def subscribe(self, sink) -> None:
+        """注册一个"每解出一条主控坐标就调一次"的回调。
+
+        回调在 ``self.lock`` 持有期间被调用，**只许入队、不许做 IO 或回头访问本对象**。
+        """
+
+        with self.lock:
+            self.sinks.append(sink)
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
@@ -463,15 +535,21 @@ class State:
             }
 
     def scene_maps_summary(self) -> list[dict[str, Any]]:
-        """`sceneNumId` 与地图名的共现统计，用来核对场景与网格的对应关系。"""
+        """`sceneNumId` 与地图名的共现统计，用来核对场景与网格的对应关系。
+
+        ``maps`` 是**观测**到的共现（来自官方地图 WS 对照）；``declared`` 是本地场景表
+        里的**静态**解析（关卡 id 与所属地图），两者可能不一致，都摆出来而不是互相覆盖。
+        """
 
         rows = []
         for scene, counter in sorted(self.scene_maps.items(), key=lambda item: str(item[0])):
+            info = resolve_scene(scene)
             rows.append(
                 {
                     "scene": int(scene) if str(scene).lstrip("-").isdigit() else scene,
                     "total": sum(counter.values()),
                     "maps": [{"mapId": name or "(未知)", "count": count} for name, count in counter.most_common()],
+                    "declared": info.to_dict() if info else None,
                 }
             )
         return rows
@@ -673,12 +751,18 @@ class Flow:
                 position = entry.motion_info.position
                 rotation = entry.motion_info.rotation
                 speed = entry.motion_info.speed
+                scene_info = resolve_scene(entry.scene_num_id)
                 decoded_at = time.time()
                 record = PositionRecord(
                     time=self.last_time,
                     flow=self.id,
                     object_id=str(entry.objid),
                     scene=entry.scene_num_id,
+                    level_id=scene_info.level_id if scene_info else "",
+                    level_name=scene_info.level_name if scene_info else "",
+                    dungeon_name=scene_info.dungeon_name if scene_info else "",
+                    map_id=scene_info.map_id if scene_info else "",
+                    map_name=scene_info.map_name if scene_info else "",
                     x=position.x,
                     y=position.y,
                     z=position.z,
@@ -705,6 +789,11 @@ class Flow:
                 self.state.last = payload
                 self.state.points.append(payload)
                 self.state.scene_maps[str(record.scene)][self._observed_map_id()] += 1
+                for sink in tuple(self.state.sinks):
+                    try:
+                        sink(payload)
+                    except Exception as exc:  # 推送给消费方失败不该拖垮解码
+                        self.state.event(f"推送坐标失败：{str(exc)[:120]}")
                 if self.state.record_writer and not self.state.record_error:
                     try:
                         self.state.record_writer.write(json.dumps(payload, ensure_ascii=False) + "\n")

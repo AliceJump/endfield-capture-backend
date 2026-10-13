@@ -9,7 +9,7 @@ from __future__ import annotations
 import struct
 import unittest
 
-from endfield_capture.decoder import Engine, Reassembler, State, protobuf_fields, value
+from endfield_capture.decoder import Engine, Flow, Reassembler, State, protobuf_fields, value
 from endfield_capture.server import QUEUE_LIMIT, find_ok_end_field, truncate_pcap_prefix
 
 
@@ -25,6 +25,14 @@ def _varint(number: int) -> bytes:
 
 def _field(number: int, payload: bytes) -> bytes:
     return _varint((number << 3) | 2) + _varint(len(payload)) + payload
+
+
+def _float(number: int, amount: float) -> bytes:
+    return _varint((number << 3) | 5) + struct.pack("<f", amount)
+
+
+def _vector(x: float, y: float, z: float) -> bytes:
+    return _float(1, x) + _float(2, y) + _float(3, z)
 
 
 class ProtobufFieldsTest(unittest.TestCase):
@@ -164,11 +172,80 @@ class StateTest(unittest.TestCase):
         self.assertEqual(rows[232]["maps"][0], {"mapId": "map02", "count": 3}, "多的排前面")
         self.assertEqual(rows[102]["total"], 5)
 
+    def test_scene_maps_summary_carries_declared_level(self):
+        """观测到的 mapId 与本地场景表的静态解析都摆出来，不互相覆盖。"""
+
+        state = State()
+        state.scene_maps["232"]["map02"] += 2
+        state.scene_maps["99999"]["map02"] += 1
+        rows = {row["scene"]: row for row in state.scene_maps_summary()}
+        self.assertEqual(rows[232]["declared"]["levelId"], "map02_lv005")
+        self.assertEqual(rows[232]["declared"]["mapId"], "map02")
+        self.assertIsNone(rows[99999]["declared"], "表里没有的场景号不猜")
+
     def test_snapshot_has_the_contract_keys(self):
         state = State()
         snapshot = state.snapshot()
         for key in ("lastPosition", "sceneMaps", "flows", "events", "now", "captureReady", "ws", "trajectory"):
             self.assertIn(key, snapshot)
+
+
+class PositionSceneTest(unittest.TestCase):
+    """消息 81 解出的坐标要带上场景表里的关卡与地图（``sceneNumId`` 只是那个号）。"""
+
+    @staticmethod
+    def _body(scene: int, object_id: int = 4628366647055237120) -> bytes:
+        motion = (
+            _field(1, _vector(-243.2, 259.47, -228.39))
+            + _field(2, _vector(0.0, 250.586, 0.0))
+            + _field(3, _vector(0.0, 0.0, 0.0))
+            + _varint((4 << 3) | 0)
+            + _varint(3)
+        )
+        move = (
+            _varint((1 << 3) | 0)
+            + _varint(object_id)
+            + _field(2, motion)
+            + _varint((3 << 3) | 0)
+            + _varint(0)
+            + _varint((4 << 3) | 0)
+            + _varint(scene)
+        )
+        # leader_index = 0，只有一条 move_info，所以它就是当前操控角色
+        return _field(1, move) + _varint((2 << 3) | 0) + _varint(0) + _varint((3 << 3) | 0) + _varint(0)
+
+    def _flow(self):
+        state = State()
+        return state, Flow(1, ("10.0.0.1", 51000), ("10.0.0.2", 30000), state, bootstrap=None)
+
+    def test_decoded_position_carries_level_and_map(self):
+        state, flow = self._flow()
+        flow._extract_positions(self._body(232), merged=False)
+        last = state.last
+        self.assertEqual(last["scene"], 232)
+        self.assertEqual(last["levelId"], "map02_lv005")
+        self.assertEqual(last["levelName"], "试验园区")
+        self.assertEqual(last["mapId"], "map02")
+        self.assertEqual(last["mapName"], "武陵")
+        self.assertEqual(last["dungeonName"], "", "大地图分区不是副本")
+        self.assertAlmostEqual(last["y"], 259.47, places=2)
+        self.assertAlmostEqual(last["yaw"], 250.586, places=2)
+
+    def test_decoded_dungeon_scene_carries_dungeon_name(self):
+        state, flow = self._flow()
+        flow._extract_positions(self._body(310), merged=False)
+        last = state.last
+        self.assertEqual((last["levelId"], last["levelName"]), ("dung01_cdg011", "物以类聚"))
+        self.assertEqual(last["dungeonName"], "物以类聚")
+
+    def test_unknown_scene_leaves_map_fields_empty(self):
+        state, flow = self._flow()
+        flow._extract_positions(self._body(99999), merged=False)
+        self.assertEqual(state.last["mapId"], "")
+        self.assertEqual(state.last["levelId"], "")
+        self.assertEqual(state.last["levelName"], "")
+        self.assertEqual(state.last["dungeonName"], "")
+        self.assertEqual(state.last["mapName"], "")
 
 
 class SrsaTest(unittest.TestCase):

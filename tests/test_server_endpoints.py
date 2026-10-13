@@ -25,13 +25,15 @@ from endfield_capture.server import DashboardHandler, make_handler
 class _RunningServer:
     """在临时端口上跑真实的 handler。"""
 
-    def __init__(self):
+    def __init__(self, *, headless: bool = False):
         self._tmp = TemporaryDirectory()
         self.run = Path(self._tmp.name)
         self.record = (self.run / "positions.jsonl").open("a", encoding="utf-8")
         self.state = State(self.record)
         self.stop = threading.Event()
-        self.http = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.state, self.run, self.record, self.stop))
+        self.http = ThreadingHTTPServer(
+            ("127.0.0.1", 0), make_handler(self.state, self.run, self.record, self.stop, headless=headless)
+        )
         self.port = self.http.server_address[1]
         self.thread = threading.Thread(target=self.http.serve_forever, daemon=True)
 
@@ -64,6 +66,25 @@ class EndpointTest(unittest.TestCase):
         self.assertIn("text/html", headers["Content-Type"])
         self.assertIn(b"scene", body.lower())
 
+    def test_headless_root_is_not_the_dashboard(self):
+        """--no-dashboard 时不该再去读 dashboard.html，只回一句自述。"""
+
+        with _RunningServer(headless=True) as server:
+            status, headers, body = server.get("/")
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", headers["Content-Type"])
+        payload = json.loads(body)
+        self.assertEqual(payload["dashboard"], "disabled")
+        self.assertIn("/api/state", payload["api"])
+
+    def test_headless_still_serves_state(self):
+        """ok-end-field 只认 /api/state：无界面模式下它必须照常可用。"""
+
+        with _RunningServer(headless=True) as server:
+            status, _headers, body = server.get("/api/state")
+        self.assertEqual(status, 200)
+        self.assertIn("lastPosition", json.loads(body))
+
     def test_state_endpoint(self):
         with _RunningServer() as server:
             status, headers, body = server.get("/api/state")
@@ -80,8 +101,26 @@ class EndpointTest(unittest.TestCase):
         self.assertIn("text/csv", headers["Content-Type"])
         self.assertTrue(body.startswith("﻿".encode()), "CSV 应带 BOM，否则 Excel 打开中文列名会乱码")
         header = body.decode("utf-8-sig").splitlines()[0]
-        for column in ("x", "y", "z", "yaw", "speed", "scene"):
+        for column in (
+            "x", "y", "z", "yaw", "speed", "scene",
+            "levelId", "levelName", "dungeonName", "mapId", "mapName",
+        ):
             self.assertIn(column, header)
+
+    def test_scene_index_endpoint_serves_the_whole_table(self):
+        with _RunningServer() as server:
+            status, headers, body = server.get("/api/scene-index")
+        self.assertEqual(status, 200)
+        self.assertIn("application/json", headers["Content-Type"])
+        payload = json.loads(body)
+        self.assertEqual(payload["count"], len(payload["scenes"]))
+        by_scene = {row["scene"]: row for row in payload["scenes"]}
+        self.assertEqual(by_scene[232]["levelId"], "map02_lv005")
+        self.assertEqual(by_scene[232]["levelName"], "试验园区")
+        self.assertEqual(by_scene[232]["mapId"], "map02")
+        self.assertEqual(by_scene[232]["mapName"], "武陵")
+        self.assertEqual(by_scene[310]["dungeonName"], "物以类聚")
+        self.assertEqual(by_scene[310]["seriesName"], "生存特训")
 
     def test_positions_csv_renders_written_rows(self):
         """写盘过的坐标必须能原样变成 CSV 行（这里正是序列化出过错的地方）。"""
