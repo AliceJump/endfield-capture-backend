@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-13T06:45:43+00:00",
+  "source": "SRSA 原生接收入口模拟（RVA 0x1901e0）恢复出的公钥模数",
+  "client_dll_sha256": "c24495e51b406f03b03890c4788ee618ae022c991405be5d5b8b787cb775ae89",
+  "client_metadata_sha256": "0076743397acadf03d3b0064343a963c7c88863b8160526d397e4b3efb96f02e",
+  "modulus_hex": "c08fac025d79b7e6c6a37cd90edc806a14d922685a052a8c7ddbd41443450f683d6f29645204e282b93e3ead2c0dfbb0a083b1fd897894c52874d7ed4f33244054f980e5730e64fdabbe54969f09aab754dd1dbe7f5cb19170425b5fde16648f606423cbe84f81602e8164c740aa2b5ed19a603cf1b5895fabce8021687af26582260b2aa009e83fede0935db7f48b8271817effa41e1c62027112343c70351ebcb35d1af9b0a57bd009e07aa8f18f6fb202b436b557fa9ed3f3a0536f4a580cb81f02dce1e93a4840f34edb120724409ad57470966b3c9a71ecb406fc21075902b5b1557afab87bf63859089c6bd0bdfcdd8b97a7d6eeb5475ea350edd451cd",
+  "modulus_bits": 2048,
+  "public_exponent": 65537,
+  "sample_pcap": "runs\\nav-verify\\20261013-130312\\capture.pcap",
+  "emulation": {
+    "state": {
+      "reason": "returned",
+      "returnValue": "0x60f91a429a10"
+    },
+    "blocks": 508741,
+    "pages": 212,
+    "seconds": 2.229,
+    "transformed_length": 199,
+    "checks": [
+      {
+        "captured": true,
+        "baseBits": 2047,
+        "exponentBits": 17,
+        "modulusBits": 2048,
+        "matchesPythonPow": true,
+        "standardPublicExponent65537": true,
+        "operandMatchesCiphertextBigEndian": true,
+        "operandMatchesCiphertextLittleEndian": false,
+        "pkcs1PaddingType": null,
+        "paddingBytes": null,
+        "type1PaddingAllFF": null
+      }
+    ]
+  }
+}
