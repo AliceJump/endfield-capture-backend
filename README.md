@@ -172,7 +172,7 @@ uv run endfield-capture-backend selftest path/to/full-session.pcap
 
 ```json
 {
-  "count": 216,
+  "count": 221,
   "maps": {"base01": "帝江号", "map01": "四号谷地", "map02": "武陵"},
   "scenes": [
     {"scene": 232, "levelId": "map02_lv005", "levelName": "试验园区", "dungeonId": "",
@@ -261,9 +261,9 @@ python tools/generate_scene_index.py --out <路径>  # 打到别处（配合 EF_
 > 其中 `Json/GameplayConfig/LevelBasicInfoTable.json` 在那边有 **221** 条关卡、在
 > StreamingAssets 里只有 **216** 条。拿后者生成，表就少 5 个场景（`463` 遂明、
 > `525` 兽影生杀、`526` 沛然轰鸣、`527` 暗曜白霆、`550` 三角定位），查这些场景号会全空。
-> 生成时打印的场景数就是这条的体检指标：本机这份客户端应为 **221**。仓库里那份目前还是
-> **216**——导出尚未补全，把导出工具修好、重新导出后重跑 `generate_scene_index.py` 即可，
-> 那 5 个场景会自动补上。
+> 生成时打印的场景数就是这条的体检指标：本机这份客户端应为 **221**。
+> `tests/test_scene_index.py` 里`test_persistent_vfs_levels_are_present` 直接钉住那 5 个场景，
+> 数字掉回去就会被测出来。
 
 另有一份同类预存数据 `data/rsa_modulus.json`：恢复登录响应要用的 2048 位公钥模数。它同样
 由离线工具生成一次，运行时**优先读它**、读不到才回退到 x86 模拟器——
@@ -281,17 +281,21 @@ python tools/generate_rsa_modulus.py --pcap <路径>
 这张表只有 `LevelBasicInfoTable.idNum` **一个编号空间**，查不到就返回 `null`，不做推测。
 客户端里同时存在好几套编号，**数字会撞车**，所以查不到时先分清是哪种：
 
-- **独立地图没有 idNum**：把客户端所有表并起来看，`LevelBasicInfoTable` 的 216 个关卡之外
-  还有 22 个关卡 id，其中带名字的是：`indie_dg016` 遂明、`indie_hdg026` 兽影生杀、
-  `indie_hdg027` 暗曜白霆、`indie_hdg028` 沛然轰鸣、`indie_hdg029` 三角定位、
-  `blackbox_filling_5` 武陵综合应用、`blackbox_power_1` 电力供给；其余是 `test_*` /
-  `factory_*` / `ld_*` 之类的测试关卡。它们**没有场景号**，报文里不会以场景号的身份出现。
+- **「没有 idNum 的关卡」其实不存在**：一个**完整**的解包产物里，`LevelBasicInfoTable`
+  （221 条）与 `Json/LevelConfig/` 下的关卡文件**是同一个集合**，没有多出来的关卡 id。
+  这条曾经写的是「216 个关卡之外还有 22 个关卡 id」，并点名 `indie_dg016` 遂明、
+  `indie_hdg026` 兽影生杀等 5 个「没有场景号」——那是**导出只读了 `StreamingAssets/VFS`**
+  造成的假象：这几个关卡在 `Persistent/VFS` 里，而它们的场景号一直存在
+  （463 / 525 / 526 / 527 / 550），现在已在表里。详见上面「导出必须包含 Persistent/VFS」。
+  `LevelGaps_resolved.json` 与文本表里另有 `blackbox_filling_5` / `blackbox_power_1` 这类
+  名字，但它们在关卡表与 LevelConfig 里都查不到——是被声明而未实现的关卡，不是场景号。
 - **`MapConfig.mapId` 是另一个空间**：解包产物 `Data/Json/MapConfig/*.json` 里每条地图配置都带
   一个 `mapId`（例如 `dung02_gdg013` 的 `mapId` 就是 **463**，它的 `levelIds` 全是 468）。
   这套号跟本表的场景号**会撞车**——最典型的是 `2`：既是 `map01` 的地图号，又是
   `map01_lv002` 的场景号。所以**不能**拿 `mapId` 当场景号查，反之亦然。
 - `LevelShortIdTable` 里的短 id（如 `463` → 长 id `23100031243`，属于 `map02_lv008`）又是
-  第三套，同样不能混用。
+  第三套，同样不能混用。**注意 `463` 正好两套都占**：作为短 id 它指 `map02_lv008`，作为本表的
+  场景号它指 `indie_dg016`（遂明）——这就是为什么查号前必须先确定手里是哪种编号。
 
 ## 与 ok-end-field 协作
 

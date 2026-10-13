@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-13T13:48:35+00:00",
+  "generated_at": "2026-10-13T15:18:34+00:00",
   "source": "LevelBasicInfoTable.idNum + LevelDescTable + I18nTextTable_CN + DungeonTable + DungeonSeriesTable + TextTable + SpecialLevelToMapTable（客户端解包快照）",
   "maps": {
     "base01": "帝江号",
@@ -2505,6 +2505,19 @@
       "domain": "blackbox_vaporizer_1"
     },
     {
+      "scene": 463,
+      "levelId": "indie_dg016",
+      "levelName": "遂明",
+      "dungeonId": "",
+      "dungeonName": "",
+      "seriesName": "",
+      "category": "",
+      "dungeonCount": 0,
+      "mapId": "map02",
+      "mapName": "武陵",
+      "domain": "domain_2"
+    },
+    {
       "scene": 464,
       "levelId": "dung02_rdg012",
       "levelName": "",
@@ -2802,6 +2815,58 @@
       "mapId": "map02",
       "mapName": "武陵",
       "domain": "domain_2"
+    },
+    {
+      "scene": 525,
+      "levelId": "indie_hdg026",
+      "levelName": "兽影生杀",
+      "dungeonId": "",
+      "dungeonName": "",
+      "seriesName": "",
+      "category": "",
+      "dungeonCount": 0,
+      "mapId": "",
+      "mapName": "",
+      "domain": "domain_1"
+    },
+    {
+      "scene": 526,
+      "levelId": "indie_hdg028",
+      "levelName": "沛然轰鸣",
+      "dungeonId": "",
+      "dungeonName": "",
+      "seriesName": "",
+      "category": "",
+      "dungeonCount": 0,
+      "mapId": "",
+      "mapName": "",
+      "domain": "domain_1"
+    },
+    {
+      "scene": 527,
+      "levelId": "indie_hdg027",
+      "levelName": "暗曜白霆",
+      "dungeonId": "",
+      "dungeonName": "",
+      "seriesName": "",
+      "category": "",
+      "dungeonCount": 0,
+      "mapId": "",
+      "mapName": "",
+      "domain": "domain_1"
+    },
+    {
+      "scene": 550,
+      "levelId": "indie_hdg029",
+      "levelName": "三角定位",
+      "dungeonId": "",
+      "dungeonName": "",
+      "seriesName": "",
+      "category": "",
+      "dungeonCount": 0,
+      "mapId": "",
+      "mapName": "",
+      "domain": "domain_1"
     },
     {
       "scene": 575,

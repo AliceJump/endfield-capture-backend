@@ -101,9 +101,15 @@ class ResolveSceneTest(unittest.TestCase):
         self.assertEqual(info.map_name, "")
 
     def test_unknown_scene_is_not_guessed(self):
-        """查不到就返回 None：463 也在这里——解包数据里没有这个场景号。"""
+        """查不到就返回 None，绝不推测。
 
-        for bad in (0, -1, 463, 99999, None, "not-a-number", ""):
+        这里曾经写死过 ``463``，理由写着「解包数据里没有这个场景号」。那个理由本身就是错的——
+        463（遂明）是个**正常场景号**，只是当时的导出漏了它。所以现在不写死具体数字，改成
+        从表里推一个**确定不在**的号：拿最大的场景号再往上跳一大段，表不长出上千条就不会撞上。
+        """
+
+        absent = max(SCENE_INDEX) + 1000
+        for bad in (0, -1, absent, None, "not-a-number", ""):
             self.assertIsNone(resolve_scene(bad), bad)
 
     def test_accepts_numeric_strings(self):
@@ -113,7 +119,36 @@ class ResolveSceneTest(unittest.TestCase):
 
 class TableShapeTest(unittest.TestCase):
     def test_size_matches_exported_level_table(self):
-        self.assertEqual(len(SCENE_INDEX), 216, "LevelBasicInfoTable 里有 216 个关卡")
+        """关卡数与本机客户端的解包表一致（**221**）。
+
+        这个数曾经是 216，而 216 不是真值——当时的导出只读了 ``StreamingAssets/VFS``，漏掉
+        ``Persistent/VFS`` 那 5 个关卡（见 ``test_persistent_vfs_levels_are_present``）。
+        所以这条同时是**导出完整性的体检**：数字掉回去，就说明导出又只读了一个 VFS 根。
+        客户端更新后这个数会变，届时重新解包核对再改这里。
+        """
+
+        self.assertEqual(
+            len(SCENE_INDEX), 221, "本机客户端两个 VFS 根合并后是 221 个关卡；掉回 216 说明导出漏了 Persistent"
+        )
+
+    def test_persistent_vfs_levels_are_present(self):
+        """这 5 个关卡**只存在于 Persistent/VFS**，缺席就说明导出又漏了那个根。
+
+        它们各自在 ``StreamingAssets/VFS`` 里的 ``LevelConfig`` 根本不存在，所以只读那个根
+        的导出必然少这一批。比单纯断言总数更精确——总数对了也可能是一增一减。
+        """
+
+        expected = {
+            463: "indie_dg016",  # 遂明
+            525: "indie_hdg026",  # 兽影生杀
+            526: "indie_hdg028",  # 沛然轰鸣
+            527: "indie_hdg027",  # 暗曜白霆
+            550: "indie_hdg029",  # 三角定位
+        }
+        for scene, level_id in expected.items():
+            info = resolve_scene(scene)
+            self.assertIsNotNone(info, f"场景 {scene}（{level_id}）缺席：导出很可能只读了 StreamingAssets/VFS")
+            self.assertEqual(info.level_id, level_id)
 
     def test_level_ids_are_unique(self):
         ids = [info.level_id for info in SCENE_INDEX.values()]
