@@ -11,8 +11,8 @@
 * **ok-end-field** —— 只有启用官方地图 WS 对照时才需要；配合本二进制一般用
   ``--no-map-ws`` 跑。
 
-两份运行时数据随包带，不用额外准备：``data/scene_index.json``（场景表）与
-``data/rsa_modulus.json``（公钥模数）。
+三份运行时资源随包带，不用额外准备：``data/scene_index.json``（场景表）、
+``data/rsa_modulus.json``（公钥模数）与 ``static/dashboard.html``（看板页面）。
 
 **故意排除 ``unicorn`` / ``capstone``**：它们只服务 ``endfield_capture.srsa`` 那个离线
 模拟器，用来恢复公钥模数；而 unicorn 的 JIT 在 PyInstaller 冻结出的进程里会直接崩掉
@@ -27,7 +27,9 @@ from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).parent  # packaging/ 的上一级 = 仓库根
 SRC = ROOT / "src"
-DATA = SRC / "endfield_capture" / "data"
+PKG = SRC / "endfield_capture"
+DATA = PKG / "data"
+STATIC = PKG / "static"
 
 #: 这些包靠动态导入，不显式列出来会被漏掉
 HIDDEN = [
@@ -71,6 +73,11 @@ a = Analysis(
     datas=[
         (str(DATA / "scene_index.json"), "endfield_capture/data"),
         (str(DATA / "rsa_modulus.json"), "endfield_capture/data"),
+        # 看板页面。**必须打进去**：server.py 走 ``DASHBOARD_HTML.read_bytes()``，文件不在
+        # 就抛 FileNotFoundError，客户端拿到的是连接被直接断开（不是干净的 500）。此前这里
+        # 漏了它，于是冻结版只能在 ``--no-dashboard`` 下用——而 README 只是"说明"了那个参数，
+        # 没说必需，拿到 exe 的人打开 / 就会撞上。只多 17 KB。
+        (str(STATIC / "dashboard.html"), "endfield_capture/static"),
     ],
     hiddenimports=HIDDEN,
     hookspath=[],

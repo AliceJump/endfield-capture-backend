@@ -78,7 +78,11 @@ python tools/generate_rsa_modulus.py --dry-run             # 只打印，不写�
 
 ## 无界面模式
 
-`serve --no-dashboard` 只提供 `/api/*`，不读也不提供 `dashboard.html`；
+`--no-dashboard` 只是**不提供**看板，页面本身仍然打在包里（17 KB，见 `static/dashboard.html`）——
+不加这个参数时 `GET /` 正常出看板。之所以之前不带它，是 spec 的 `datas` 漏了那个文件，而
+`server.py` 是直接 `read_bytes()`，文件不在就抛异常、连接被断开。已补上，现在冻结版与源码版
+行为一致。
+
 `serve --pipe --no-http` 连端口都不开，只推 Windows 命名管道（协议见主 README
 「命名管道」一节）：
 

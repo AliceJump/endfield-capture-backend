@@ -132,19 +132,21 @@ uv run endfield-capture-backend serve --port 8765
 改完代码、或客户端更新后，先跑自检：
 
 ```bash
-uv run endfield-capture-backend selftest tests/data/reference-session.pcap
+uv run endfield-capture-backend selftest path/to/full-session.pcap
 ```
 
 它会回放整份抓包，核对移动消息 / 对象位置 / 主控位置的数量与最后一条坐标，并且额外
 **打乱顺序 + 注入重复包**再跑一遍以验证 TCP 重组。任何一项不符即以非零码退出。
 
-预期数值在 `src/endfield_capture/selftest.py` 的 `REFERENCE_EXPECTATION`，而
-`tests/data/reference-session.pcap` **就是**那个参考会话本身，所以这条自检是可复现的——
-不必指望手上还留着某次 `runs/` 产物。它需要本机装着客户端（要读 DLL 与 metadata 里的静态
-私钥），`tests/test_selftest_reference.py` 会在有客户端的机器上自动跑这一遍。
+预期数值在 `src/endfield_capture/selftest.py` 的 `REFERENCE_EXPECTATION`，它描述的是研究阶段
+那次**参考会话**（137 移动 / 229 对象 / 39 主控）。核对别的抓包会用 `--expect` 传自己的预期值。
 
-> 换会话后这套数会对不上（抓包不同，数量自然不同）。想核对**别的**抓包，用 `--expect`
-> 传一份自己的预期值；`REFERENCE_EXPECTATION` 只描述仓库里那一份。
+> **参考会话那份抓包不进仓库。** 它是一次真实会话的完整流量，含登录握手、两端 IP 与精确时间，
+> 放进公开历史就撤不回来。想跑这条回归就本地放一份完整会话（**必须含登录握手**）到
+> `tests/data/reference-session.pcap`（已在 `.gitignore` 里），或用 `EF_REFERENCE_PCAP` 指到别处
+> ——`tests/test_selftest_reference.py` 会用它，没有就跳过。自己抓一份的办法见
+> [「游戏已经在跑怎么办」](#游戏已经在跑怎么办)：先起后端再开游戏，`runs/<时间戳>/capture.pcap`
+> 就是完整会话。
 
 ## 看板与 HTTP 接口
 
