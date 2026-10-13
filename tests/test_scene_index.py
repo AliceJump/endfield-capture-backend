@@ -156,8 +156,35 @@ class TableShapeTest(unittest.TestCase):
             )
 
     def test_most_levels_have_a_name(self):
+        """名字覆盖率。**192 是当前真值**——别为了让它过就回去动生成器。
+
+        这个数曾经是 205：多出来的 13 个来自生成器里「关卡名缺失就退回副本系列名」那一级，
+        而它兜出来的是**分类标签**「支线任务」，不是地名。那一级已经删掉（见
+        ``tools/generate_scene_index.py`` 的 ``dungeon_name``），所以覆盖率下降是对的。
+        下限留一点余量，是给客户端小版本更新时增删关卡用的。
+        """
+
         named = sum(1 for info in SCENE_INDEX.values() if info.level_name)
-        self.assertGreaterEqual(named, 200, "名字覆盖率掉了，多半是生成时漏了文本表")
+        self.assertGreaterEqual(named, 190, "名字覆盖率掉了，多半是生成时漏了文本表")
+
+    #: 这些是**分类标签**，不是地名，任何一列都不该出现。
+    GENERIC_LABELS = ("支线任务",)
+
+    def test_generic_labels_are_not_used_as_names(self):
+        """守卫：分类标签不许再灌进地名列。
+
+        生成器曾经在关卡名/副本名取不到时退回**副本系列名**，把「支线任务」写进了 21 个
+        场景的 ``dungeonName``、其中 13 个的 ``levelName``——看起来像真有个地区叫这个名字，
+        而消费方（ok-end-field）会把它当地名用。取不到就留空，这条钉住那个回退别再回来。
+        """
+
+        for scene, info in SCENE_INDEX.items():
+            for field, value in (("levelName", info.level_name), ("dungeonName", info.dungeon_name)):
+                self.assertNotIn(
+                    value,
+                    self.GENERIC_LABELS,
+                    f"场景 {scene} 的 {field} 是分类标签 {value!r}，不是地名",
+                )
 
     def test_payload_shape(self):
         payload = scene_index_payload()

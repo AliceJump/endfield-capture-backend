@@ -247,6 +247,16 @@ python tools/generate_scene_index.py --out <路径>  # 打到别处（配合 EF_
 # 换机器时逐个覆盖：--levels / --special / --desc / --i18n / --text / --dungeons / --series
 ```
 
+> **导出必须包含 `Persistent/VFS` 那一层。** 客户端有 `Endfield_Data/StreamingAssets/VFS` 与
+> `Endfield_Data/Persistent/VFS` 两个 VFS 根，**后者优先级更高**，同一路径的文件以后者为准。
+> 只读 StreamingAssets 的导出会漏内容——实测 `Json/` 组有 400 个文件只存在于 Persistent，
+> 其中 `Json/GameplayConfig/LevelBasicInfoTable.json` 在那边有 **221** 条关卡、在
+> StreamingAssets 里只有 **216** 条。拿后者生成，表就少 5 个场景（`463` 遂明、
+> `525` 兽影生杀、`526` 沛然轰鸣、`527` 暗曜白霆、`550` 三角定位），查这些场景号会全空。
+> 生成时打印的场景数就是这条的体检指标：本机这份客户端应为 **221**。仓库里那份目前还是
+> **216**——导出尚未补全，把导出工具修好、重新导出后重跑 `generate_scene_index.py` 即可，
+> 那 5 个场景会自动补上。
+
 另有一份同类预存数据 `data/rsa_modulus.json`：恢复登录响应要用的 2048 位公钥模数。它同样
 由离线工具生成一次，运行时**优先读它**、读不到才回退到 x86 模拟器——
 打包出来的 exe 走的正是前者（冻结进程里 unicorn 的 JIT 会崩）。客户端更新后要重跑：

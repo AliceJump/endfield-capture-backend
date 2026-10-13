@@ -107,8 +107,17 @@ def load_names(desc_path: Path, i18n: dict[str, str]) -> dict[str, str]:
     return names
 
 
-def dungeon_name(entry: dict, series: dict, text: dict, i18n: dict[str, str]) -> str:
-    """副本名的解析优先级，与导出侧 ``resolve_scene_tables.py`` 保持一致。"""
+def dungeon_name(entry: dict, text: dict, i18n: dict[str, str]) -> str:
+    """副本名；**取不到就留空**。
+
+    这里曾经还有一级「退回副本系列名」的兜底，已删掉：它只在没有任何真名字时才生效，
+    于是永远只会兜出一个**分类标签**。实测 173 个有副本的关卡里有 21 个走到那一级，
+    兜出来的**全部**是同一个「支线任务」；而 ``build_scenes`` 里 ``levelName`` 还会再
+    退回 ``dungeonName``，同一个标签就灌进了 ``levelName`` / ``dungeonName`` 两列，
+    看起来像真有个地区叫「支线任务」。
+
+    本模块的契约是"查不到就留空、不猜"（与 ``scene_index.py`` 的说明一致），所以宁可空着。
+    """
 
     dungeon_id = entry.get("dungeonId", "")
     text_value = i18n.get(str(entry.get("dungeonName", {}).get("id")))
@@ -117,9 +126,6 @@ def dungeon_name(entry: dict, series: dict, text: dict, i18n: dict[str, str]) ->
     key = text.get(dungeon_id)
     if key and i18n.get(str(key["id"])):
         return i18n[str(key["id"])]
-    series_name = i18n.get(str(series.get(entry.get("dungeonSeriesId", ""), {}).get("name", {}).get("id")))
-    if series_name:
-        return series_name
     key = text.get(dungeon_id + "_title")
     if key and i18n.get(str(key["id"])):
         return i18n[str(key["id"])]
@@ -151,7 +157,7 @@ def load_dungeons(
         picked = dungeons[ids[0]]
         table[scene] = (
             ids[0],
-            dungeon_name(picked, series, text, i18n),
+            dungeon_name(picked, text, i18n),
             i18n.get(str(series.get(picked.get("dungeonSeriesId", ""), {}).get("name", {}).get("id"))) or "",
             picked.get("dungeonCategory", ""),
             len(ids),
