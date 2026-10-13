@@ -33,7 +33,8 @@ QUEUE_LIMIT = 20000
 #: 抓包过滤器。游戏主连接实测用过 30000 与 40000
 CAPTURE_FILTER = "tcp port 30000 or tcp port 40000"
 
-DASHBOARD_HTML = Path(__file__).with_name("dashboard.html")
+#: 看板页面。与 ``data/`` 一样是包内资源——打包时靠 hatchling 的包目录规则自动带上
+DASHBOARD_HTML = Path(__file__).with_name("static") / "dashboard.html"
 
 
 def pick_interface(wanted: str | None):

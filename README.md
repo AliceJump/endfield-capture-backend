@@ -312,17 +312,27 @@ uv run python -m unittest discover -s tests
 uv run endfield-capture-backend selftest <pcap>
 ```
 
-模块划分：
+模块划分（大致按一条坐标流经的顺序：入口 → 解码链 → 两个出口 → 验证）：
 
 | 模块 | 职责 |
 |---|---|
+| `cli.py` | 命令行入口：`serve` / `selftest` |
 | `pe_image.py` | 最小 PE 解析（节表、VA↔文件偏移），只读本地文件 |
 | `srsa.py` | 离线模拟原生接收入口，恢复公钥模数 |
+| `schema.py` | 用独立 protobuf 描述复核解出的坐标 |
 | `decoder.py` | TCP 重组、分层解密、消息与坐标解析 |
 | `scene_index.py` | 只读查表：场景号（`idNum`）→ 关卡 → 中文名 → 副本/系列 → 大地图（读 `data/scene_index.json`） |
+| `map_compare.py` | 可选的官方地图 WS 对照（需 ok-end-field，启用即与 AGPL-3.0 链接） |
 | `server.py` | 抓包 + 本地 HTTP 看板 |
-| `schema.py` | 用独立 protobuf 描述复核解出的坐标 |
+| `pipe_server.py` | 命名管道推送（`--pipe`），给同机消费方读 |
 | `selftest.py` | 回放核对 |
+
+包内另有两个资源目录，代码平铺在包根：
+
+| 目录 | 内容 |
+|---|---|
+| `data/` | 两份**离线生成**的运行时数据：`scene_index.json`（场景表）、`rsa_modulus.json`（公钥模数）。运行时只读，生成脚本在 `tools/` |
+| `static/` | 看板页面 `dashboard.html`（`--no-dashboard` 时不读） |
 
 ## 许可
 
