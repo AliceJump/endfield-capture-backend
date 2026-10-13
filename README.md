@@ -240,14 +240,20 @@ python -c "import json;[print(json.loads(l)['type'], json.loads(l).get('scene'))
 $env:EF_SCENE_INDEX = "D:\somewhere\scene_index.json"
 ```
 
-表本身是客户端版本的快照，由离线工具生成一次（需要解包产物，默认路径是本机那份）：
+表本身是客户端版本的快照，由离线工具生成一次（需要解包产物）：
 
 ```bash
+# 用环境变量指出输入表的两个根（仓库里不留本机路径）
+setx EF_MAP_EXPORT_DIR "D:\somewhere\Endfield_Map_Export"    # 含 Json/ 与 Readable/TableCfg_json/
+setx EF_TABLE_JSON_DIR "D:\somewhere\TableCfg_json"          # 解包工具解出的名字类表
+
 python tools/generate_scene_index.py              # 写 src/endfield_capture/data/scene_index.json
 python tools/generate_scene_index.py --dry-run    # 只看统计
 python tools/generate_scene_index.py --out <路径>  # 打到别处（配合 EF_SCENE_INDEX）
-# 换机器时逐个覆盖：--levels / --special / --desc / --i18n / --text / --dungeons / --series
+# 单个表也能单独覆盖：--levels / --special / --desc / --i18n / --text / --dungeons / --series
 ```
+
+两个环境变量都没设时，按当前工作目录下的 `./Endfield_Map_Export` 与 `./TableCfg_json` 找。
 
 > **导出必须包含 `Persistent/VFS` 那一层。** 客户端有 `Endfield_Data/StreamingAssets/VFS` 与
 > `Endfield_Data/Persistent/VFS` 两个 VFS 根，**后者优先级更高**，同一路径的文件以后者为准。

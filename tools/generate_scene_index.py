@@ -13,30 +13,53 @@
   副本、副本名与所属系列（按 ``DungeonTable.sceneId`` 反查到关卡上，不是 ``levelId``——
   那是副本加载用的底图，靶场那批全都写着 ``map02_lv009``）。
 
-默认路径是本机那份解包产物的位置，换机器用对应参数覆盖：
+输入表的两个根用**环境变量**指定（仓库里不留任何本机路径）：
+
+* ``EF_MAP_EXPORT_DIR`` —— 客户端解包导出目录（含 ``Json/`` 与 ``Readable/TableCfg_json/``）；
+* ``EF_TABLE_JSON_DIR`` —— 解包工具解出的 ``TableCfg_json/``（名字类表在这里）。
+
+两个都没设时按**当前工作目录**下的 ``./Endfield_Map_Export`` 与 ``./TableCfg_json`` 找。
+每个 ``--levels`` / ``--i18n`` … 也能单独覆盖，优先级高于环境变量：
 
     python tools/generate_scene_index.py                 # 写 src/endfield_capture/data/scene_index.json
     python tools/generate_scene_index.py --dry-run       # 只打印统计
     python tools/generate_scene_index.py --out <路径>
+
+Windows 上设一次用户级环境变量即可长期生效：
+
+    setx EF_MAP_EXPORT_DIR "D:\\somewhere\\Endfield_Map_Export"
+    setx EF_TABLE_JSON_DIR "D:\\somewhere\\TableCfg_json"
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 DEFAULT_OUT = REPO_ROOT / "src" / "endfield_capture" / "data" / "scene_index.json"
-DEFAULT_LEVELS = Path("E:/LuQing/end filed/Endfield_Map_Export/Json/GameplayConfig/LevelBasicInfoTable.json")
-DEFAULT_SPECIAL = Path("E:/LuQing/end filed/Endfield_Map_Export/Readable/TableCfg_json/SpecialLevelToMapTable.json")
-DEFAULT_DESC = Path("E:/LuQing/end filed/Endfield_Map_Export/Readable/TableCfg_json/LevelDescTable.json")
-DEFAULT_I18N = Path("E:/LuQing/end filed/.tools/EndfieldUnpacker/DecryptOutput/TableCfg_json/I18nTextTable_CN.json")
-DEFAULT_TEXT = Path("E:/LuQing/end filed/.tools/EndfieldUnpacker/DecryptOutput/TableCfg_json/TextTable.json")
-DEFAULT_DUNGEONS = Path("E:/LuQing/end filed/.tools/EndfieldUnpacker/DecryptOutput/TableCfg_json/DungeonTable.json")
-DEFAULT_SERIES = Path("E:/LuQing/end filed/.tools/EndfieldUnpacker/DecryptOutput/TableCfg_json/DungeonSeriesTable.json")
+
+#: 输入表的两个根，用环境变量覆盖（**仓库里不留任何本机路径**）。分别指向：
+#:
+#: - ``EF_MAP_EXPORT_DIR``：客户端解包导出，含 ``Json/`` 与 ``Readable/TableCfg_json/``
+#: - ``EF_TABLE_JSON_DIR``：解包工具解出的 ``TableCfg_json/``（名字类表在这里）
+#:
+#: 默认值是**当前工作目录**下的相对路径，方便把导出放在仓库旁边直接跑。
+#: 每个 ``--levels`` / ``--i18n`` … 也仍可单独覆盖，优先级高于环境变量。
+MAP_EXPORT_DIR = Path(os.environ.get("EF_MAP_EXPORT_DIR", "./Endfield_Map_Export"))
+TABLE_JSON_DIR = Path(os.environ.get("EF_TABLE_JSON_DIR", "./TableCfg_json"))
+
+DEFAULT_LEVELS = MAP_EXPORT_DIR / "Json/GameplayConfig/LevelBasicInfoTable.json"
+DEFAULT_SPECIAL = MAP_EXPORT_DIR / "Readable/TableCfg_json/SpecialLevelToMapTable.json"
+DEFAULT_DESC = MAP_EXPORT_DIR / "Readable/TableCfg_json/LevelDescTable.json"
+DEFAULT_I18N = TABLE_JSON_DIR / "I18nTextTable_CN.json"
+DEFAULT_TEXT = TABLE_JSON_DIR / "TextTable.json"
+DEFAULT_DUNGEONS = TABLE_JSON_DIR / "DungeonTable.json"
+DEFAULT_SERIES = TABLE_JSON_DIR / "DungeonSeriesTable.json"
 
 #: 大地图的显示名（取自客户端文本表：map01 / map02 来自 MapIdTable.showName，
 #: base01 用 LevelDescTable 的关卡名而不是地图服务那边的「塔卫二」——那是行星名）
@@ -223,6 +246,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--series", type=Path, default=DEFAULT_SERIES, help="DungeonSeriesTable.json")
     parser.add_argument("--dry-run", action="store_true", help="只打印统计，不写文件")
     args = parser.parse_args(argv)
+
+    # --levels 是唯一的硬依赖：其余表缺了只会退化成空字段，它缺了没法生成。
+    # 早失败并说清怎么设——否则只会在几百行后抛一个指向相对路径的 FileNotFoundError。
+    if not args.levels.is_file():
+        raise SystemExit(
+            f"找不到 {args.levels}\n"
+            "输入表的位置用环境变量指定（仓库里特意不留本机路径）：\n"
+            f"  EF_MAP_EXPORT_DIR = {os.environ.get('EF_MAP_EXPORT_DIR') or '(未设，默认 ./Endfield_Map_Export)'}\n"
+            f"  EF_TABLE_JSON_DIR = {os.environ.get('EF_TABLE_JSON_DIR') or '(未设，默认 ./TableCfg_json)'}\n"
+            'Windows 设一次长期生效：setx EF_MAP_EXPORT_DIR "D:\\...\\Endfield_Map_Export"\n'
+            "也可以用参数逐个覆盖：--levels / --special / --desc / --i18n / --text / --dungeons / --series"
+        )
+
+    # 软依赖：缺了不报错，但产出会**静默**少掉名字/副本，所以必须说出来
+    soft = {
+        "关卡显示名（--desc/--i18n）": (args.desc, args.i18n),
+        "副本与系列（--dungeons/--text/--series）": (args.dungeons, args.text, args.series),
+    }
+    for label, paths in soft.items():
+        missing = [str(p) for p in paths if not p.is_file()]
+        if missing:
+            print(f"！缺少 {label}，这部分字段会留空：{', '.join(missing)}")
 
     if args.special.is_file():
         check_special(args.special)
