@@ -104,9 +104,6 @@ class ReassemblerTest(unittest.TestCase):
 class EngineDispatchTest(unittest.TestCase):
     """引擎要按端口认连接，并且**拒绝**没有起点的流。"""
 
-    class _Packet(dict):
-        """够用的假包：只实现解码器真正会碰的访问方式。"""
-
     def _make_packet(self, src, sport, dst, dport, seq, payload, flags=0x18):
         from scapy.all import IP, TCP, Ether
 

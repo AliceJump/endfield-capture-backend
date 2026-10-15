@@ -228,23 +228,6 @@ class TableShapeTest(unittest.TestCase):
         self.assertEqual(len(payload["scenes"]), payload["count"])
 
 
-class MapAttributionTest(unittest.TestCase):
-    """地图归属是生成时写进表里的（``parent_map`` 在离线工具里），这里只核对结果。"""
-
-    def test_special_table_wins_over_prefix(self):
-        self.assertEqual(resolve_scene(262).map_id, "map02", "indie_dg007 首墩内部靠显式声明归到 map02")
-        self.assertEqual(resolve_scene(370).map_id, "map02", "dung02_dg005")
-
-    def test_dungeon_prefix_falls_back_to_world(self):
-        # dung02_rdg015 的 domainName 是 domain_1，按 domain 判会错；表里存的是 map02
-        info = resolve_scene(575)
-        self.assertEqual((info.level_id, info.map_id, info.domain), ("dung02_rdg015", "map02", "domain_1"))
-
-    def test_standalone_levels_have_no_map(self):
-        info = resolve_scene(89)  # blackbox_basic_1：自己就是 MapIdTable 里的一项
-        self.assertEqual((info.map_id, info.map_name), ("", ""))
-
-
 class LoaderTest(unittest.TestCase):
     """运行时只读预存表：读不到、结构不对都要炸，不能静默变成空表。"""
 

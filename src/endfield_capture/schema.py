@@ -21,14 +21,3 @@ message('CS_MOVE_OBJECT_MOVE', [(1,'move_info',11,'MOVE_OBJECT_MOVE_INFO',True),
 pool = descriptor_pool.DescriptorPool()
 pool.Add(fd)
 PositionMessage = message_factory.GetMessageClass(pool.FindMessageTypeByName('recovered.CS_MOVE_OBJECT_MOVE'))
-
-def validate_positions(body, rows):
-    parsed = PositionMessage.FromString(body)
-    assert len(parsed.move_info) == len(rows)
-    for entry,row in zip(parsed.move_info,rows,strict=True):
-        assert entry.objid == row['objectId']
-        assert parsed.leader_index == row['leaderIndex']
-        assert entry.scene_num_id == row['sceneNumId']
-        assert entry.motion_info.state == row['state']
-        assert {axis:getattr(entry.motion_info.position,axis) for axis in 'xyz'} == row['position']
-    return len(rows)

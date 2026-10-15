@@ -66,18 +66,21 @@ __all__ = [
 
 #: 已核对过的客户端哈希。对不上就拒绝启动——函数 RVA 和静态材料会随版本改变，
 #: 继续跑只会安静地解出错的东西。
-CLIENT_DLL_SHA256 = "c24495e51b406f03b03890c4788ee618ae022c991405be5d5b8b787cb775ae89"
-CLIENT_METADATA_SHA256 = "0076743397acadf03d3b0064343a963c7c88863b8160526d397e4b3efb96f02e"
+CLIENT_DLL_SHA256 = "ab00f1c41e13edf9816f142b166e3c2536d5bc7707992c39e5ed52d1cc888e2c"
+CLIENT_METADATA_SHA256 = "461321d9dca6a832bce3bd2390402efc7c83c145554e97a8058bb68fbec1c8ca"
 
 METADATA_RELATIVE_PATH = "Endfield_Data/il2cpp_data/Metadata/global-metadata.dat"
 
 #: 预存的公钥模数（由 ``tools/generate_rsa_modulus.py`` 离线生成）；不在就打不动模拟器
 MODULUS_DATA_PATH = Path(__file__).with_name("data") / "rsa_modulus.json"
 
-#: RSA 私钥在 metadata 字符串字面量表里的位置（本机已核对版本）
-_KEY_LITERAL_RVA = 0x47B8FB7
-_KEY_LITERAL_SIZE = 7
-_KEY_LITERAL_DISP = 0x8861D8A
+#: RSA 私钥的 metadata usage 插槽（本机已核对版本）。该插槽里 8 字节编码成
+#: ``(5 << 29) | (索引 << 1) | 1``——类型 5 是 il2cpp 的字符串字面量，低 29 位是索引。
+#: 旧版本这里用 ``RVA + SIZE + DISP`` 三段拼出插槽地址；本次客户端更新后直接给整段
+#: 插槽 RVA，另两段留 0，等价且少一处易错的加法。
+_KEY_LITERAL_RVA = 0x10657230
+_KEY_LITERAL_SIZE = 0
+_KEY_LITERAL_DISP = 0
 
 #: 会话流从 ChaCha20 密钥流的第 64 字节开始（前 64 字节已被初始化消耗）
 _CIPHER_SEEK_BYTES = 64
@@ -87,9 +90,6 @@ _BUFFER_LIMIT = 32 * 1024 * 1024
 
 #: 乱序缓存上限
 _REORDER_LIMIT = 32 * 1024 * 1024
-
-#: 反压队列容量；满了计入丢包而不是阻塞抓包回调
-_QUEUE_LIMIT = 20000
 
 
 def protobuf_fields(raw: bytes) -> dict[int, list[Any]]:
@@ -387,20 +387,6 @@ class Bootstrap:
             raise ValueError("会话初始化结构不符合预期")
         return key, nonce
 
-    # ------------------------------------------------------------------ #
-    # 生命周期
-    # ------------------------------------------------------------------ #
-    @property
-    def image_retained(self) -> bool:
-        """模拟跑完后仍持有整份 DLL 镜像吗（用于内存自检）。"""
-
-        return self._image is not None
-
-    def release(self) -> None:
-        self._image = None
-        self._private = None  # type: ignore[assignment]
-        gc.collect()
-
 
 class Reassembler:
     """把 TCP 段拼成连续字节流，并处理乱序、重传与重叠。"""
@@ -578,10 +564,6 @@ class Flow:
         self.processing_at: float | None = None
         self.processing_perf: float | None = None
         self.replayed = False
-
-    @property
-    def leaders_seen(self) -> int:
-        return self.leaders
 
     def receive(self, direction: str, packet) -> None:
         self.last_time = float(packet.time)

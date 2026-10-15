@@ -99,9 +99,6 @@ class PeImage:
         file_offset, section = self.file_offset_for_rva(rva)
         return file_offset, section, rva
 
-    def u32_at_va(self, va: int) -> int:
-        return struct.unpack("<I", self.bytes_at_va(va, 4))[0]
-
     def u64_at_va(self, va: int) -> int:
         return struct.unpack("<Q", self.bytes_at_va(va, 8))[0]
 
