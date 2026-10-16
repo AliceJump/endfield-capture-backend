@@ -45,7 +45,6 @@ from typing import Any
 from Crypto.Cipher import ChaCha20
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
-from google.protobuf.message import DecodeError
 from lz4.block import decompress as lz4_decompress
 
 from .pe_image import PeImage
@@ -698,11 +697,9 @@ class Flow:
         elif message_id == 81 and direction == "out":
             self._extract_positions(body, merged)
         elif direction == "in" and message_id in (221, 222, 223):
+            # 工厂报文是坐标解码的旁路：快照自己吞掉解析失败，不向这里抛异常。
             with self.state.lock:
-                try:
-                    self.state.travel_poles.apply(self.id, message_id, body, self.last_time)
-                except (DecodeError, ValueError):
-                    self.state.travel_poles.invalidate(self.id, message_id)
+                self.state.travel_poles.apply(self.id, message_id, body, self.last_time)
 
     def _unpack_merged(self, body: bytes, direction: str) -> None:
         """展开 ``CS_MERGE_MSG``：里面每个子消息都有自己的头与可选 LZ4。"""
