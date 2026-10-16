@@ -45,11 +45,13 @@ from typing import Any
 from Crypto.Cipher import ChaCha20
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
+from google.protobuf.message import DecodeError
 from lz4.block import decompress as lz4_decompress
 
 from .pe_image import PeImage
 from .scene_index import resolve_scene
 from .schema import PositionMessage
+from .travel_poles import TravelPoleStore
 
 __all__ = [
     "CLIENT_DLL_SHA256",
@@ -452,6 +454,7 @@ class State:
         self.events: deque = deque(maxlen=40)
         self.recent: deque = deque(maxlen=14)
         self.flows: dict[int, Flow] = {}
+        self.travel_poles = TravelPoleStore()
         self.bootstrap_seconds: float | None = None
         self.modulus_seconds: float | None = None
         self.capture_error: str | None = None
@@ -515,6 +518,7 @@ class State:
                 "modulusSeconds": self.modulus_seconds,
                 "captureError": self.capture_error,
                 "recordError": self.record_error,
+                "travelPoles": self.travel_poles.summary(),
                 "sceneMaps": self.scene_maps_summary(),
                 "ws": {**self.ws, "trajectory": list(self.ws_points)},
                 "now": time.time(),
@@ -636,6 +640,8 @@ class Flow:
         body_length = size - 3 - head_length
         del buffer[:size]
         self.status = "正在解码"
+        with self.state.lock:
+            self.state.travel_poles.begin_session(self.id)
         self.note(1, "in", body_length, False)
         # 公钥模数是懒恢复的（用这条登录响应当样本），所以它的耗时要到这时才知道
         self.state.modulus_seconds = self.bootstrap.modulus_seconds
@@ -691,6 +697,12 @@ class Flow:
             self._unpack_merged(body, direction)
         elif message_id == 81 and direction == "out":
             self._extract_positions(body, merged)
+        elif direction == "in" and message_id in (221, 222, 223):
+            with self.state.lock:
+                try:
+                    self.state.travel_poles.apply(self.id, message_id, body, self.last_time)
+                except (DecodeError, ValueError):
+                    self.state.travel_poles.invalidate(self.id, message_id)
 
     def _unpack_merged(self, body: bytes, direction: str) -> None:
         """展开 ``CS_MERGE_MSG``：里面每个子消息都有自己的头与可选 LZ4。"""
