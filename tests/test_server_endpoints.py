@@ -94,6 +94,42 @@ class EndpointTest(unittest.TestCase):
         for key in ("lastPosition", "sceneMaps", "flows", "captureReady", "ws", "runDirectory"):
             self.assertIn(key, payload)
 
+    def test_travel_poles_endpoint_in_headless_mode_and_after_disconnect(self):
+        from endfield_capture.decoder import Flow
+        from endfield_capture.factory_schema import FACTORY_MESSAGES
+
+        message = FACTORY_MESSAGES[221](chapter_id="domain_2")
+        node = message.nodes.add(node_id=10, template_id="travel_pole_2")
+        node.components.add(component_id=100).travel_pole.default_next = 20
+        with _RunningServer(headless=True) as server:
+            server.state.travel_poles.begin_session(1)
+            server.state.travel_poles.apply(1, 221, message.SerializeToString(), 12.5)
+            flow = Flow(1, ("client", 1), ("server", 30000), server.state, None)
+            server.state.flows[1] = flow
+            flow.status = "正在解码"
+            status, _, body = server.get("/api/travel-poles")
+            self.assertEqual(status, 200)
+            payload = json.loads(body)
+            self.assertTrue(payload["connectionActive"])
+            self.assertEqual(payload["nodes"][0]["defaultNext"], 20)
+            self.assertFalse(payload["defaultLinks"][0]["targetResolved"])
+            flow.status = "连接已结束"
+            _, _, body = server.get("/api/travel-poles")
+            self.assertFalse(json.loads(body)["connectionActive"])
+            _, _, body = server.get("/api/state")
+            self.assertEqual(json.loads(body)["travelPoles"]["nodeCount"], 1)
+            self.assertNotIn("nodes", json.loads(body)["travelPoles"])
+
+    def test_travel_poles_before_login_is_explicitly_empty(self):
+        with _RunningServer() as server:
+            status, _, body = server.get("/api/travel-poles")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertIsNone(payload["flow"])
+        self.assertFalse(payload["connectionActive"])
+        self.assertEqual(payload["syncedChapters"], [])
+        self.assertEqual(payload["nodes"], [])
+
     def test_positions_csv_has_header_and_bom(self):
         with _RunningServer() as server:
             status, headers, body = server.get("/api/positions.csv")

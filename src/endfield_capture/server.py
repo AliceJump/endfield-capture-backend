@@ -194,7 +194,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         {
                             "service": "endfield-capture-backend",
                             "dashboard": "disabled",
-                            "api": ["/api/state", "/api/scene-index", "/api/positions.csv", "/api/events"],
+                            "api": ["/api/state", "/api/travel-poles", "/api/scene-index", "/api/positions.csv", "/api/events"],
                         },
                         ensure_ascii=False,
                     ).encode()
@@ -203,6 +203,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send(DASHBOARD_HTML.read_bytes(), "text/html; charset=utf-8")
         elif path == "/api/state":
             self._send(json.dumps(self._snapshot(), ensure_ascii=False).encode())
+        elif path == "/api/travel-poles":
+            with self.state.lock:
+                payload = self.state.travel_poles.snapshot()
+                flow = self.state.flows.get(payload["flow"])
+                payload["flowStatus"] = flow.status if flow else None
+                payload["connectionActive"] = bool(flow and not flow.failed and flow.status == "正在解码")
+            self._send(json.dumps(payload, ensure_ascii=False, allow_nan=False).encode())
         elif path == "/api/positions.csv":
             self._send(self._positions_csv(), "text/csv; charset=utf-8")
         elif path == "/api/scene-index":
