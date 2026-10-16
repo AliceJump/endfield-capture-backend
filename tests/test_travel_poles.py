@@ -6,8 +6,10 @@ import math
 import struct
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
 from endfield_capture.decoder import Flow, State
+from endfield_capture.factory_schema import FACTORY_MESSAGES
 from endfield_capture.travel_poles import TravelPoleStore
 
 
@@ -140,6 +142,26 @@ class TravelPoleTest(unittest.TestCase):
         data = self.apply(222, chapter(removed=(10, 20), packed=False))
         self.assertEqual(data["nodes"], [])
 
+    def test_node_update_without_components_merges_instead_of_dropping(self):
+        self.baseline()
+        # 只带节点字段、不带组件的 222：节点、组件索引与默认下一站都必须保留，
+        # 明确出现的字段（这里是 flag）才覆盖。
+        data = self.apply(222, chapter(nodes=(integer(1, 10) + integer(10, 16),)))
+        self.assertEqual(data["nodeCount"], 2)
+        self.assertEqual(data["defaultLinkCount"], 1)
+        source = next(n for n in data["nodes"] if n["nodeId"] == 10)
+        self.assertTrue(source["shared"])
+        self.assertEqual(source["defaultNext"], 20)
+        self.assertEqual(source["templateId"], "travel_pole_2")
+        self.assertEqual(source["mapId"], 85)
+        self.assertEqual(source["rotation"], {"x": 0.0, "y": 270.0, "z": 0.0})
+
+    def test_node_update_without_components_does_not_resurrect_removed_node(self):
+        self.baseline()
+        self.apply(222, chapter(removed=(20,)))
+        data = self.apply(222, chapter(nodes=(integer(1, 20),)))
+        self.assertEqual([n["nodeId"] for n in data["nodes"]], [10])
+
     def test_deletion_and_node_replacement_remove_old_component_index(self):
         self.baseline()
         self.apply(222, chapter(nodes=(node(10, 110, 20),)))
@@ -181,6 +203,14 @@ class TravelPoleTest(unittest.TestCase):
         data = self.apply(221, chapter(nodes=(node(50, 500),)), flow=2)
         self.assertEqual([n["nodeId"] for n in data["nodes"]], [50])
 
+    def test_same_flow_rehandshake_clears_previous_snapshot(self):
+        self.baseline()
+        self.store.begin_session(1)  # 同一条连接重新握手：flow 号不变也算新会话
+        data = self.apply(221, chapter("domain_3", nodes=(node(40, 400),)))
+        self.assertEqual(data["syncedChapters"], ["domain_3"])
+        self.assertEqual([n["nodeId"] for n in data["nodes"]], [40])
+        self.assertEqual(data["defaultLinks"], [])
+
     def test_missing_world_position_is_not_invented_as_origin(self):
         data = self.apply(221, chapter(nodes=(node(10, 100, 20, position=None), node(20, 200))))
         self.assertIsNone(data["nodes"][0]["position"])
@@ -197,10 +227,20 @@ class TravelPoleTest(unittest.TestCase):
         data = self.apply(221, chapter(nodes=(unrelated, node(10, 100))) + blob(99, b"ignored"))
         self.assertEqual(data["nodeCount"], 1)
 
-    def test_non_finite_transform_is_rejected(self):
+    def test_non_finite_transform_is_rejected_and_invalidates_the_snapshot(self):
+        self.baseline()
         for invalid in (math.inf, math.nan):
-            with self.assertRaises(ValueError):
-                self.apply(221, chapter(nodes=(node(10, 100, position=(invalid, 0, 0)),)))
+            data = self.apply(221, chapter(nodes=(node(10, 100, position=(invalid, 0, 0)),)))
+            self.assertEqual(data["nodes"], [])
+            self.assertEqual(data["syncedChapters"], [])
+            self.assertIn("ValueError", data["error"])
+
+    def test_component_delta_for_unseen_component_id_is_ignored(self):
+        # 已知边界：223 只对 221/222 索引过的 ComponentId 生效，之后才新挂上去的
+        # 组件得等下一次完整同步。
+        self.apply(221, chapter(nodes=(node(10, 100, 20),)))
+        data = self.apply(223, chapter(components=(component(999, 30),)))
+        self.assertEqual([n["defaultNext"] for n in data["nodes"]], [20])
 
 
 class FlowTravelPoleTest(unittest.TestCase):
@@ -237,3 +277,22 @@ class FlowTravelPoleTest(unittest.TestCase):
         flow = Flow(1, ("client", 1), ("server", 30000), state, None)
         flow.business(221, chapter(nodes=(node(10, 100),)), "out", False)
         self.assertEqual(state.travel_poles.summary()["nodeCount"], 0)
+
+    def test_unexpected_error_never_reaches_the_decoder(self):
+        """解析层出意料之外的 bug 时，滑索快照作废，但连接与坐标解码照旧。"""
+
+        state = State()
+        state.travel_poles.begin_session(1)
+        flow = Flow(1, ("client", 1), ("server", 30000), state, None)
+
+        class Exploding:
+            @staticmethod
+            def FromString(body):
+                raise RuntimeError("boom")
+
+        with mock.patch.dict(FACTORY_MESSAGES, {221: Exploding}):
+            flow.business(221, chapter(nodes=(node(10, 100),)), "in", False)
+        self.assertFalse(flow.failed)
+        self.assertIn("RuntimeError", state.travel_poles.summary()["error"])
+        flow.business(81, b"", "out", False)
+        self.assertEqual(state.moves, 1)
