@@ -1,71 +1,55 @@
-"""Minimal factory wire schema recovered from the verified client metadata.
-
-Only fields needed for travel poles are described. Unknown gameplay fields are
-discarded after parsing; no login/authentication messages use this schema.
-"""
+"""Typed factory wire schema; unknown fields are discarded by the snapshot store."""
 
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
-_fd = descriptor_pb2.FileDescriptorProto(name="travel_poles.proto", package="travel_poles", syntax="proto3")
+from .factory_fields import FACTORY_FIELDS
+
+_fd = descriptor_pb2.FileDescriptorProto(name="factory.proto", package="factory", syntax="proto3")
+_SCALARS = {"int": 5, "uint": 13, "long": 3, "ulong": 4, "float": 2, "double": 1, "bool": 8, "string": 9}
+
+
+def _field(message, number, name, kind, *, repeated=False):
+    field = message.field.add(name=name, number=number, label=3 if repeated else 1)
+    field.type = _SCALARS.get(kind, 11)
+    if field.type == 11:
+        field.type_name = ".factory." + kind
+    return field
 
 
 def _message(name, fields):
-    result = _fd.message_type.add(name=name)
-    for number, field_name, field_type, type_name, repeated in fields:
-        field = result.field.add(name=field_name, number=number, type=field_type, label=3 if repeated else 1)
-        if type_name:
-            field.type_name = ".travel_poles." + type_name
+    message = _fd.message_type.add(name=name)
+    for number, field_name, kind in fields:
+        if kind.startswith("Map<"):
+            key, value = kind[4:-1].split(",")
+            entry = message.nested_type.add(name=field_name.title().replace("_", "") + "Entry")
+            entry.options.map_entry = True
+            _field(entry, 1, "key", key)
+            _field(entry, 2, "value", value)
+            _field(message, number, field_name, name + "." + entry.name, repeated=True)
+        else:
+            _field(message, number, field_name, kind.removesuffix("[]"), repeated=kind.endswith("[]"))
 
 
-_message("Vector", [(1, "x", 2, None, False), (2, "y", 2, None, False), (3, "z", 2, None, False)])
+for _name, _fields in FACTORY_FIELDS.items():
+    _message(_name, _fields)
+
 _message(
-    "Transform",
-    [(4, "map_id", 5, None, False), (9, "position", 11, "Vector", False), (10, "rotation", 11, "Vector", False)],
+    "SyncChapter", [(2, "chapter_id", "string"), (3, "nodes", "SCD_FAC_NODE[]"), (7, "maps", "SCD_FACTORY_SYNC_MAP[]")]
 )
-_message(
-    "Power",
-    [
-        (1, "in_power", 8, None, False),
-        (2, "power_cost", 3, None, False),
-        (11, "need_in_power", 8, None, False),
-        (12, "power_cost_show", 3, None, False),
-    ],
-)
-_message("TravelPole", [(11, "default_next", 13, None, False)])
-_message(
-    "Social", [(1, "owner_id", 4, None, False), (2, "social_node_id", 13, None, False), (6, "preset", 8, None, False)]
-)
-_message(
-    "Component",
-    [
-        (1, "component_id", 13, None, False),
-        (2, "component_type", 5, None, False),
-        (24, "travel_pole", 11, "TravelPole", False),
-        (44, "social", 11, "Social", False),
-    ],
-)
-_message(
-    "Node",
-    [
-        (1, "node_id", 13, None, False),
-        (3, "template_id", 9, None, False),
-        (4, "transform", 11, "Transform", False),
-        (5, "is_deactive", 8, None, False),
-        (8, "power", 11, "Power", False),
-        (10, "flag", 13, None, False),
-        (12, "components", 11, "Component", True),
-    ],
-)
-_message("SyncChapter", [(2, "chapter_id", 9, None, False), (3, "nodes", 11, "Node", True)])
-_message(
-    "ModifyNodes",
-    [(2, "chapter_id", 9, None, False), (3, "nodes", 11, "Node", True), (4, "remove_nodes", 13, None, True)],
-)
-_message("ModifyComponents", [(2, "chapter_id", 9, None, False), (3, "components", 11, "Component", True)])
+_message("ModifyNodes", [(2, "chapter_id", "string"), (3, "nodes", "SCD_FAC_NODE[]"), (4, "remove_nodes", "uint[]")])
+_message("ModifyComponents", [(2, "chapter_id", "string"), (3, "components", "SCD_FAC_COM[]")])
+_message("RemoveChapters", [(11, "delete_chapter_ids", "string[]")])
 
 _pool = descriptor_pool.DescriptorPool()
 _pool.Add(_fd)
 FACTORY_MESSAGES = {
-    mid: message_factory.GetMessageClass(_pool.FindMessageTypeByName("travel_poles." + name))
-    for mid, name in ((221, "SyncChapter"), (222, "ModifyNodes"), (223, "ModifyComponents"))
+    mid: message_factory.GetMessageClass(_pool.FindMessageTypeByName("factory." + name))
+    for mid, name in (
+        (211, "RemoveChapters"),
+        (212, "RemoveChapters"),
+        (221, "SyncChapter"),
+        (222, "ModifyNodes"),
+        (223, "ModifyComponents"),
+        (227, "SC_FACTORY_MODIFY_CHAPTER_MAP"),
+    )
 }
