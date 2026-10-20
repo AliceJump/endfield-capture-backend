@@ -89,6 +89,7 @@ python tools/generate_rsa_modulus.py --dry-run             # 只打印，不写�
 | 端点 | 用途 |
 |---|---|
 | `GET /api/state` | ok-end-field 唯一的必需接口（轮询或给 SSE 缓存） |
+| `GET /api/travel-poles` | 本次登录同步的滑索节点、坐标、朝向与默认下一站 |
 | `GET /api/events` | SSE 推送，想改成"推"而不是"拉"时用 |
 | `GET /api/scene-index` | 场景号 → 关卡/中文名/副本/大地图（读包内预存表） |
 | `GET /api/positions.csv` | 本次会话的坐标 CSV |
