@@ -130,6 +130,48 @@ class EndpointTest(unittest.TestCase):
         self.assertEqual(payload["syncedChapters"], [])
         self.assertEqual(payload["nodes"], [])
 
+    def test_facilities_returns_non_zipline_payloads_and_lightweight_summary(self):
+        from endfield_capture.decoder import Flow
+        from endfield_capture.factory_schema import FACTORY_MESSAGES
+
+        message = FACTORY_MESSAGES[221](chapter_id="domain_2")
+        node = message.nodes.add(node_id=10, template_id="furnance_1")
+        node.components.add(component_id=100).producer.formula_id = "formula"
+        message.maps.add(map_id=85).wires.add(index=2**63, from_com_id=100, to_com_id=200)
+        with _RunningServer(headless=True) as server:
+            server.state.facilities.begin_session(1)
+            flow = Flow(1, ("client", 1), ("server", 30000), server.state, None)
+            server.state.flows[1] = flow
+            flow.status = "正在解码"
+            flow.business(221, message.SerializeToString(), "in", False)
+            status, _, body = server.get("/api/facilities?cachebust=1")
+            self.assertEqual(status, 200)
+            payload = json.loads(body)
+            self.assertTrue(payload["connectionActive"])
+            self.assertEqual(payload["nodes"][0]["components"][0]["producer"]["formulaId"], "formula")
+            self.assertEqual(payload["wires"][0]["wireId"], str(2**63))
+            self.assertFalse(payload["wires"][0]["targetResolved"])
+            flow.status = "连接已结束"
+            _, _, body = server.get("/api/facilities")
+            self.assertFalse(json.loads(body)["connectionActive"])
+            _, _, body = server.get("/api/state")
+            summary = json.loads(body)["facilities"]
+            self.assertEqual(summary["nodeCount"], 1)
+            self.assertNotIn("nodes", summary)
+            self.assertNotIn("wires", summary)
+            _, _, body = server.get("/")
+            self.assertIn("/api/facilities", json.loads(body)["api"])
+
+    def test_facilities_before_login_is_explicitly_empty(self):
+        with _RunningServer() as server:
+            status, _, body = server.get("/api/facilities")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertFalse(payload["connectionActive"])
+        self.assertEqual(payload["nodes"], [])
+        self.assertEqual(payload["wires"], [])
+        self.assertEqual(payload["templateCounts"], {})
+
     def test_positions_csv_has_header_and_bom(self):
         with _RunningServer() as server:
             status, headers, body = server.get("/api/positions.csv")

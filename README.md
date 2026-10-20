@@ -150,6 +150,10 @@ uv run endfield-capture-backend selftest path/to/full-session.pcap
 
 ## 看板与 HTTP 接口
 
+`GET /api/facilities` 可读取本次登录同步的全部工厂设施：节点、坐标/朝向、类型化组件 payload、
+端口和地图线路。覆盖电力、生产、仓储、传送带、管道等，不按滑索模板过滤；
+`/api/state.facilities` 仅提供轻量摘要。字段、同步范围和使用方式见 [工厂设施快照](docs/facilities.md)。
+
 除角色坐标外，`GET /api/travel-poles` 可读取本次登录同步的工厂滑索节点、坐标与建筑朝向、
 类型、共享/供电字段及有向默认下一站。支持 221 完整同步、222 节点增删改和 223 组件更新；
 重登录会清空旧会话数据。`/api/state.travelPoles` 只提供摘要，完整数据按需查询。
