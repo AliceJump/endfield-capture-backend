@@ -248,6 +248,8 @@ class FlowTravelPoleTest(unittest.TestCase):
         state = State()
         state.travel_poles.begin_session(1)
         state.travel_poles.apply(1, 221, chapter(nodes=(node(10, 100),)), 0)
+        state.facilities.begin_session(1)
+        state.facilities.apply(1, 221, chapter(nodes=(node(10, 100),)), 0)
         bootstrap = SimpleNamespace(keys=lambda body: (b"k" * 32, b"n" * 12), modulus_seconds=0)
         flow = Flow(2, ("client", 1), ("server", 30000), state, bootstrap)
         head = integer(1, 1)
@@ -255,6 +257,8 @@ class FlowTravelPoleTest(unittest.TestCase):
         flow._consume_initial_response(buffer, len(head), len(buffer))
         self.assertEqual(state.travel_poles.snapshot()["nodes"], [])
         self.assertEqual(state.travel_poles.flow, 2)
+        self.assertEqual(state.facilities.snapshot()["nodes"], [])
+        self.assertEqual(state.facilities.flow, 2)
 
     def test_invalid_factory_message_does_not_break_coordinate_decoder(self):
         state = State()

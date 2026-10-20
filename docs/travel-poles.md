@@ -4,6 +4,8 @@
 普通、长距、无需供电等类型由 `templateId` 区分；解析以组件为准，不靠模板名字白名单。
 不需要启用官方地图 WS，也不依赖 ok-end-field。
 
+其他工厂设施及地图线路可使用 [工厂设施快照](facilities.md) 的 `GET /api/facilities`。
+
 ```powershell
 uv run --locked endfield-capture-backend serve --game-dir 'D:/Games/Endfield Game' --no-map-ws
 # 后端开始监听后再登录；以下请求在另一终端执行
@@ -84,6 +86,7 @@ Invoke-WebRequest http://127.0.0.1:8765/api/travel-poles -OutFile travel-poles.j
 223 只对该 ComponentId 已在 221/222 节点 payload 里出现过的组件生效；之后才新挂上去的 ComponentId 无从归属到节点，会被忽略，得等下一次完整同步。
 
 新连接握手成功时清空上一会话的快照；同一条连接重新握手（flow 号不变）同样清空。旧 flow 的迟到消息不能重新写入。
+211/212 的 DeleteChapterIdList 会移除指定 chapter 的节点和同步基线，之后的增量需等待新的 221。
 新账号未完成同步时，不会显示上一账号节点。
 
 `syncedChapters` 表示本会话已经观察到完整同步的区域，**不保证所有区域都已下发**。空列表表示尚无基线；
